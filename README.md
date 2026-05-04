@@ -2,7 +2,7 @@
 
 > AI that reads handwritten math, verifies step-by-step reasoning, and grades like a human teacher.
 
-🔗 **Live Demo: [stemgrade-ai-vamshi-gaddi.streamlit.app](https://stemgrade-ai-vamshi-gaddi.streamlit.app)**
+🔗 **Live Demo: (https://stemgrade-ai-vamshi-gaddi.streamlit.app)**
 
 **Teacher login:** `teacher` / `teach@123`
 
