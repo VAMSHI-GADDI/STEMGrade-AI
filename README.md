@@ -91,5 +91,5 @@ This system moves beyond answer-checking into **reasoning path evaluation** — 
 ## Author
 
 **Vamshi Gaddi**  
-M.S. Computer Science, Missouri S&T  
+M.S. Information Science and Technology, Missouri S&T  
 [github.com/VAMSHI-GADDI](https://github.com/VAMSHI-GADDI)
