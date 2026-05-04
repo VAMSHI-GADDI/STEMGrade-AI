@@ -1,4 +1,3 @@
-
 import os, re, base64, time, smtplib
 from datetime import datetime
 from email.mime.text import MIMEText
@@ -116,7 +115,7 @@ def get_api_key():
         if k:
             st.session_state["api_key"] = k
             return k
-    except:
+    except Exception:
         pass
     k = os.getenv("OPENAI_API_KEY", "")
     if k:
@@ -148,7 +147,7 @@ def do_login(username, password):
     return False
 
 def do_logout():
-    for k in ["logged_in","user_role","user_name"]:
+    for k in ["logged_in", "user_role", "user_name"]:
         st.session_state[k] = DEFAULTS[k]
 
 # ── SIDEBAR ──
@@ -177,28 +176,28 @@ with st.sidebar:
         st.markdown("---")
         if st.session_state["user_role"] == "teacher":
             page = st.radio("Navigate", [
-                "Home","Single Student","Teacher Dashboard",
-                "Question Bank","Student Submissions",
-                "Leaderboard","Analytics","About"
+                "Home", "Single Student", "Teacher Dashboard",
+                "Question Bank", "Student Submissions",
+                "Leaderboard", "Analytics", "About"
             ])
         else:
             page = st.radio("Navigate", [
-                "Home","Submit Solution","My Results","Leaderboard","About"
+                "Home", "Submit Solution", "My Results", "Leaderboard", "About"
             ])
         st.markdown("---")
         subject = st.selectbox("Subject", [
-            "Algebra","Quadratics","Systems of Equations",
-            "Physics","Chemistry","Calculus"
+            "Algebra", "Quadratics", "Systems of Equations",
+            "Physics", "Chemistry", "Calculus"
         ])
     else:
-        page = st.radio("Navigate", ["Home","Login","About"])
+        page = st.radio("Navigate", ["Home", "Login", "About"])
         subject = "Algebra"
 
     st.caption("STEMGrade AI v3.0")
 
 # Build client AFTER sidebar so api_key is up to date
 api_key = get_api_key()
-client  = OpenAI(api_key=api_key) if api_key else None
+client = OpenAI(api_key=api_key) if api_key else None
 
 # ── GRADING FUNCTIONS ──
 def norm(step):
@@ -211,13 +210,13 @@ def get_final_answer(sol):
     try:
         last = split_steps(sol)[-1]
         return last.split("=")[-1].strip() if "=" in last else last.strip()
-    except:
+    except Exception:
         return None
 
 def check_answer(pred, correct):
     try:
         return simplify(sympify(str(pred)) - sympify(str(correct))) == 0
-    except:
+    except Exception:
         return str(pred).strip() == str(correct).strip()
 
 def get_prompt(subj, problem):
@@ -239,10 +238,11 @@ def gen_steps(problem, subj):
         r = client.chat.completions.create(
             model="gpt-4o-mini",
             messages=[
-                {"role":"system","content":f"You are a precise {subj} solver. Return ONLY semicolon-separated steps."},
-                {"role":"user","content":get_prompt(subj, problem)}
+                {"role": "system", "content": f"You are a precise {subj} solver. Return ONLY semicolon-separated steps."},
+                {"role": "user", "content": get_prompt(subj, problem)}
             ],
-            temperature=0, timeout=30
+            temperature=0,
+            timeout=30
         )
         return split_steps(r.choices[0].message.content.strip())
     except Exception as e:
@@ -257,11 +257,12 @@ def read_image(img_bytes, problem, subj):
         b64 = base64.b64encode(img_bytes).decode()
         r = client.chat.completions.create(
             model="gpt-4o",
-            messages=[{"role":"user","content":[
-                {"type":"text","text":f"Handwritten {subj} solution for: {problem}. Extract steps only. Separate with semicolons. Write 3*x not 3x."},
-                {"type":"image_url","image_url":{"url":f"data:image/jpeg;base64,{b64}"}}
+            messages=[{"role": "user", "content": [
+                {"type": "text", "text": f"Handwritten {subj} solution for: {problem}. Extract steps only. Separate with semicolons. Write 3*x not 3x."},
+                {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64}"}}
             ]}],
-            max_tokens=500, timeout=30
+            max_tokens=500,
+            timeout=30
         )
         return r.choices[0].message.content.strip()
     except Exception as e:
@@ -271,61 +272,62 @@ def read_image(img_bytes, problem, subj):
 def norm_eq(step):
     try:
         step = norm(step)
-        if "=" not in step: return None
-        l,r = step.split("=",1)
-        return simplify(sympify(l)-sympify(r))
-    except:
+        if "=" not in step:
+            return None
+        l, r = step.split("=", 1)
+        return simplify(sympify(l) - sympify(r))
+    except Exception:
         return None
 
 def solve_step(step):
     try:
         expr = norm_eq(step)
-        if expr is None: return None, []
+        if expr is None:
+            return None, []
         syms = sorted(list(expr.free_symbols), key=str)
-        if len(syms) != 1: return None, []
+        if len(syms) != 1:
+            return None, []
         v = syms[0]
         return v, [simplify(s) for s in solve(expr, v)]
-    except:
+    except Exception:
         return None, []
 
 def valid_trans(a, b):
     try:
         av, ap = solve_step(a)
         bv, bp = solve_step(b)
-        # If we cannot parse either step, give benefit of the doubt
-        if av is None or bv is None: return True
-        if not ap or not bp: return True
-        # Variables must match
-        if av != bv: return False
-        # Solutions must match
+        if av is None or bv is None:
+            return True
+        if not ap or not bp:
+            return True
+        if av != bv:
+            return False
         a_sols = {str(simplify(s)) for s in ap}
         b_sols = {str(simplify(s)) for s in bp}
         return a_sols == b_sols
-    except:
+    except Exception:
         return True
 
 def first_wrong(steps):
     if len(steps) <= 1:
         return None
-    # Get the final answer first
+
     last = steps[-1]
     final_val = None
     try:
         if "=" in last:
             final_val = sympify(last.split("=")[-1].strip())
-    except:
+    except Exception:
         pass
-    
+
     for i in range(1, len(steps)):
-        if not valid_trans(steps[i-1], steps[i]):
-            # Double check: if final answer is correct, 
-            # this might be a formatting issue not a real error
+        if not valid_trans(steps[i - 1], steps[i]):
             try:
-                v, sols = solve_step(steps[i-1])
+                v, sols = solve_step(steps[i - 1])
                 if v is not None and sols and final_val is not None:
                     if any(simplify(s - final_val) == 0 for s in sols):
-                        continue  # Final answer matches, skip this false positive
-            except:
+                        continue
+            except Exception:
                 pass
             return i + 1
     return None
@@ -334,94 +336,115 @@ def match_prob(stu, exp):
     try:
         se = norm_eq(stu[0])
         ee = norm_eq(exp[0])
-        if se is None or ee is None: return False
-        return simplify(se-ee)==0
-    except:
+        if se is None or ee is None:
+            return False
+        return simplify(se - ee) == 0
+    except Exception:
         return False
 
 def incon(steps, ans):
     out = []
     try:
-        fv,_ = solve_step(steps[0])
-        if fv is None: return out
+        fv, _ = solve_step(steps[0])
+        if fv is None:
+            return out
         fval = sympify(str(ans))
-        for i,s in enumerate(steps,1):
+        for i, s in enumerate(steps, 1):
             e = norm_eq(s)
-            if e is None or simplify(e.subs(fv,fval))!=0:
+            if e is None or simplify(e.subs(fv, fval)) != 0:
                 out.append(i)
-    except:
+    except Exception:
         pass
     return out
 
 def score_result(fc, pm, fw, inc):
-    if fc and pm and fw is None and not inc: return 10,"none","All steps correct and final answer matches."
-    if fc and pm and fw is not None:        return 7,"reasoning_path_error","Final answer correct but reasoning has an invalid step."
-    if fc and not pm:                       return 5,"problem_mismatch","Final answer correct but does not match the problem."
-    if not fc and pm and fw is None:        return 6,"final_answer_error","Reasoning valid but final answer is incorrect."
-    if not fc and fw==2:                    return 4,"early_reasoning_error","Mistake occurs early in the solution."
-    if not fc and fw is not None:           return 5,"reasoning_error","Solution contains a reasoning error."
-    return 3,"needs_human_review","Could not be reliably graded automatically."
+    if fc and pm and fw is None and not inc:
+        return 10, "none", "All steps correct and final answer matches."
+    if fc and pm and fw is not None:
+        return 7, "reasoning_path_error", "Final answer correct but reasoning has an invalid step."
+    if fc and not pm:
+        return 5, "problem_mismatch", "Final answer correct but does not match the problem."
+    if not fc and pm and fw is None:
+        return 6, "final_answer_error", "Reasoning valid but final answer is incorrect."
+    if not fc and fw == 2:
+        return 4, "early_reasoning_error", "Mistake occurs early in the solution."
+    if not fc and fw is not None:
+        return 5, "reasoning_error", "Solution contains a reasoning error."
+    return 3, "needs_human_review", "Could not be reliably graded automatically."
 
 def calc_conf(fc, pm, fw, inc):
-    return round(0.35*fc + 0.30*pm + 0.20*(fw is None) + 0.15*(not inc), 2)
+    return round(0.35 * fc + 0.30 * pm + 0.20 * (fw is None) + 0.15 * (not inc), 2)
 
 def run_grade(problem, solution, correct, subj):
-    exp   = gen_steps(problem, subj)
+    exp = gen_steps(problem, subj)
     steps = split_steps(solution)
-    ans   = get_final_answer(solution)
-    fc    = check_answer(ans, correct)
-    pm    = match_prob(steps, exp) if exp else False
-    fw    = first_wrong(steps)
-    inc   = incon(steps, ans)
-    sc,et,fb = score_result(fc,pm,fw,inc)
-    conf  = calc_conf(fc,pm,fw,inc)
+    ans = get_final_answer(solution)
+    fc = check_answer(ans, correct)
+    pm = match_prob(steps, exp) if exp and steps else False
+    fw = first_wrong(steps)
+    inc = incon(steps, ans) if steps else []
+    sc, et, fb = score_result(fc, pm, fw, inc)
+    conf = calc_conf(fc, pm, fw, inc)
     return {
-        "score":sc,"error_type":et,"feedback":fb,
-        "first_wrong":fw,"inconsistent":inc,
-        "final_answer":ans,"final_correct":fc,
-        "problem_match":pm,"confidence":conf,
-        "needs_review":sc<10 or conf<0.9 or fw or inc or not fc or not pm,
-        "expected":exp,"steps":steps
+        "score": sc,
+        "error_type": et,
+        "feedback": fb,
+        "first_wrong": fw,
+        "inconsistent": inc,
+        "final_answer": ans,
+        "final_correct": fc,
+        "problem_match": pm,
+        "confidence": conf,
+        "needs_review": sc < 10 or conf < 0.9 or fw or inc or not fc or not pm,
+        "expected": exp,
+        "steps": steps
     }
 
 def show_results(r):
-    c1,c2,c3,c4 = st.columns(4)
-    c1.metric("Score",      f"{r['score']}/10")
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("Score", f"{r['score']}/10")
     c2.metric("Confidence", r["confidence"])
-    c3.metric("Review",     "Yes" if r["needs_review"] else "No")
-    c4.metric("Error",      r["error_type"])
-    st.progress(r["score"]/10)
-    if r["score"]==10:   st.success(r["feedback"])
-    elif r["score"]>=6:  st.warning(r["feedback"])
-    else:                st.error(r["feedback"])
+    c3.metric("Review", "Yes" if r["needs_review"] else "No")
+    c4.metric("Error", r["error_type"])
+    st.progress(r["score"] / 10)
+
+    if r["score"] == 10:
+        st.success(r["feedback"])
+    elif r["score"] >= 6:
+        st.warning(r["feedback"])
+    else:
+        st.error(r["feedback"])
+
     st.markdown("---")
-    c1,c2 = st.columns(2)
+    c1, c2 = st.columns(2)
     with c1:
         st.markdown("**Expected Steps:**")
-        for i,s in enumerate(r["expected"],1):
+        for i, s in enumerate(r["expected"], 1):
             st.markdown(
                 f'''<div style="background:#f0f0f0;padding:7px 12px;border-radius:6px;
 margin:3px 0;font-family:monospace;border-left:4px solid #39FF14;color:#000">{i}. {s}</div>''',
-                unsafe_allow_html=True)
+                unsafe_allow_html=True
+            )
     with c2:
         st.markdown("**Student Steps:**")
-        for i,s in enumerate(r["steps"],1):
-            wrong = r["first_wrong"] and i>=r["first_wrong"]
-            bg    = "#ffebee" if wrong else "#e8f5e9"
-            bdr   = "#f44336" if wrong else "#4caf50"
-            lbl   = "WRONG" if wrong else "OK"
+        for i, s in enumerate(r["steps"], 1):
+            wrong = r["first_wrong"] and i >= r["first_wrong"]
+            bg = "#ffebee" if wrong else "#e8f5e9"
+            bdr = "#f44336" if wrong else "#4caf50"
+            lbl = "WRONG" if wrong else "OK"
             st.markdown(
                 f'''<div style="background:{bg};padding:7px 12px;border-radius:6px;
 margin:3px 0;font-family:monospace;border-left:4px solid {bdr};color:#000">{lbl} {i}. {s}</div>''',
-                unsafe_allow_html=True)
+                unsafe_allow_html=True
+            )
 
 SAMPLES = {
-    "Algebra":              ("Solve for x: 3*x - 6 = 9",                   "5",       "3*x - 6 = 9; 3*x = 15; x = 5"),
-    "Quadratics":           ("Solve: x**2 - 5*x + 6 = 0",                  "2",       "x**2 - 5*x + 6 = 0; (x-2)*(x-3) = 0; x = 2"),
-    "Systems of Equations": ("Solve: x + y = 5 and x - y = 1",             "3",       "x + y = 5; x - y = 1; 2*x = 6; x = 3; y = 2"),
-    "Physics":              ("Find force: mass=5kg, acceleration=10 m/s^2", "50",      "F = m*a; F = 5*10; F = 50"),
-    "Chemistry":            ("Balance: H2 + O2 = H2O",                     "2",       "H2 + O2 = H2O; 2*H2 + O2 = 2*H2O"),
-    "Calculus":             ("Find derivative of x**2 + 3*x",              "2*x + 3", "f(x) = x**2 + 3*x; f_prime(x) = 2*x + 3"),
+    "Algebra": ("Solve for x: 3*x - 6 = 9", "5", "3*x - 6 = 9; 3*x = 15; x = 5"),
+    "Quadratics": ("Solve: x**2 - 5*x + 6 = 0", "2", "x**2 - 5*x + 6 = 0; (x-2)*(x-3) = 0; x = 2"),
+    "Systems of Equations": ("Solve: x + y = 5 and x - y = 1", "3", "x + y = 5; x - y = 1; 2*x = 6; x = 3; y = 2"),
+    "Physics": ("Find force: mass=5kg, acceleration=10 m/s^2", "50", "F = m*a; F = 5*10; F = 50"),
+    "Chemistry": ("Balance: H2 + O2 = H2O", "2", "H2 + O2 = H2O; 2*H2 + O2 = 2*H2O"),
+    "Calculus": ("Find derivative of x**2 + 3*x", "2*x + 3", "f(x) = x**2 + 3*x; f_prime(x) = 2*x + 3"),
 }
 
 # ══════════════════════════════════════════
@@ -437,12 +460,12 @@ border-radius:20px;text-align:center;margin-bottom:24px">
 AI-Powered STEM Homework Grader — Grade smarter, not harder.</p>
 </div>""", unsafe_allow_html=True)
 
-    c1,c2,c3,c4 = st.columns(4)
-    for col,icon,title,sub in zip(
-        [c1,c2,c3,c4],
-        ["✍️","🧮","👨‍🏫","📊"],
-        ["Handwriting","Step-by-Step","Dashboard","Analytics"],
-        ["Read & Grade","Analysis","Whole Class","& Reports"]
+    c1, c2, c3, c4 = st.columns(4)
+    for col, icon, title, sub in zip(
+        [c1, c2, c3, c4],
+        ["✍️", "🧮", "👨‍🏫", "📊"],
+        ["Handwriting", "Step-by-Step", "Dashboard", "Analytics"],
+        ["Read & Grade", "Analysis", "Whole Class", "& Reports"]
     ):
         with col:
             st.markdown(f"""
@@ -454,7 +477,7 @@ box-shadow:0 4px 16px rgba(0,0,0,0.08);border-top:4px solid #39FF14;border:1px s
 </div>""", unsafe_allow_html=True)
 
     st.markdown("---")
-    c1,c2 = st.columns(2)
+    c1, c2 = st.columns(2)
     with c1:
         st.markdown("""
 ### How it works
@@ -488,9 +511,9 @@ elif page == "Login":
 border:2px solid #39FF14;max-width:480px;margin:0 auto">
 <h3 style="color:#000;margin-top:0">Sign In</h3>
 </div>""", unsafe_allow_html=True)
-    uname   = st.text_input("Username", placeholder="Enter your username")
-    pword   = st.text_input("Password", type="password", placeholder="Enter your password")
-    clicked = st.button("Login", use_container_width=True)
+    uname = st.text_input("Username", placeholder="Enter your username")
+    pword = st.text_input("Password", type="password", placeholder="Enter your password")
+    clicked = st.button("Login", width="stretch")
     if clicked:
         if not uname or not pword:
             st.warning("Please enter both username and password.")
@@ -523,7 +546,7 @@ border-radius:20px;text-align:center;margin-bottom:24px">
 <p style="color:#000;font-size:1.1em;margin-top:10px">
 Built to make STEM grading smarter, faster, and fairer.</p>
 </div>""", unsafe_allow_html=True)
-    c1,c2 = st.columns(2)
+    c1, c2 = st.columns(2)
     with c1:
         st.markdown("""
 ### Mission
@@ -555,50 +578,50 @@ Student: {st.session_state['user_name'].title()}</div>""", unsafe_allow_html=Tru
     st.markdown("---")
 
     st.markdown("#### Timer")
-    tc1,tc2,tc3 = st.columns(3)
+    tc1, tc2, tc3 = st.columns(3)
     with tc1:
-        dur = st.selectbox("Time Limit (min)",[5,10,15,20,30,45,60],index=1)
-        st.session_state["timer_duration"] = dur*60
+        dur = st.selectbox("Time Limit (min)", [5, 10, 15, 20, 30, 45, 60], index=1)
+        st.session_state["timer_duration"] = dur * 60
     with tc2:
         if st.button("Start Timer"):
             st.session_state["timer_running"] = True
-            st.session_state["timer_start"]   = time.time()
+            st.session_state["timer_start"] = time.time()
     with tc3:
         if st.button("Stop Timer"):
             st.session_state["timer_running"] = False
 
     if st.session_state["timer_running"] and st.session_state["timer_start"]:
-        rem = max(0, st.session_state["timer_duration"]-(time.time()-st.session_state["timer_start"]))
-        col = "#39FF14" if rem>60 else "#FF4444"
+        rem = max(0, st.session_state["timer_duration"] - (time.time() - st.session_state["timer_start"]))
+        col = "#39FF14" if rem > 60 else "#FF4444"
         st.markdown(f"""<div style="background:#000;color:{col};padding:14px;border-radius:10px;
 font-size:2.4em;font-weight:bold;text-align:center;font-family:monospace;
 border:3px solid {col};letter-spacing:4px;margin:8px 0">
 {int(rem//60):02d}:{int(rem%60):02d}</div>""", unsafe_allow_html=True)
-        if rem==0:
+        if rem == 0:
             st.error("Time is up!")
             st.session_state["timer_running"] = False
 
     st.markdown("---")
-    assigned = [q for q in st.session_state["question_bank"] if q.get("subject")==subject]
+    assigned = [q for q in st.session_state["question_bank"] if q.get("subject") == subject]
     if assigned:
-        opts = [f"{i+1}. {q['problem']}" for i,q in enumerate(assigned)]
-        sel  = st.selectbox("Select assigned problem", opts)
-        idx  = int(sel.split(".")[0])-1
-        problem        = assigned[idx]["problem"]
+        opts = [f"{i+1}. {q['problem']}" for i, q in enumerate(assigned)]
+        sel = st.selectbox("Select assigned problem", opts)
+        idx = int(sel.split(".")[0]) - 1
+        problem = assigned[idx]["problem"]
         correct_answer = assigned[idx]["answer"]
         st.info(f"Problem: {problem}")
     else:
-        smp            = SAMPLES.get(subject, SAMPLES["Algebra"])
-        problem        = st.text_input("Problem",        smp[0])
+        smp = SAMPLES.get(subject, SAMPLES["Algebra"])
+        problem = st.text_input("Problem", smp[0])
         correct_answer = st.text_input("Correct Answer", smp[1])
 
-    method = st.radio("Input Method",["Type solution","Upload handwritten image"])
+    method = st.radio("Input Method", ["Type solution", "Upload handwritten image"])
     sol = ""
     if method == "Type solution":
         smp = SAMPLES.get(subject, SAMPLES["Algebra"])
         sol = st.text_area("Your Solution", smp[2], height=130)
     else:
-        f = st.file_uploader("Upload image", type=["jpg","jpeg","png"])
+        f = st.file_uploader("Upload image", type=["jpg", "jpeg", "png"])
         if f:
             st.image(f, width=380)
             if st.button("Read Handwriting"):
@@ -608,19 +631,27 @@ border:3px solid {col};letter-spacing:4px;margin:8px 0">
                     st.success("Done!")
                     st.session_state["extracted_solution"] = result
         if st.session_state["extracted_solution"]:
-            sol = st.text_area("Extracted (edit if needed)",
-                               st.session_state["extracted_solution"], height=130)
+            sol = st.text_area("Extracted (edit if needed)", st.session_state["extracted_solution"], height=130)
 
-    if st.button("Submit and Grade", use_container_width=True):
-        if not api_key: st.error("No API key."); st.stop()
-        if not sol.strip(): st.warning("Enter your solution."); st.stop()
+    if st.button("Submit and Grade", width="stretch"):
+        if not api_key:
+            st.error("No API key.")
+            st.stop()
+        if not sol.strip():
+            st.warning("Enter your solution.")
+            st.stop()
         with st.spinner("Grading..."):
             r = run_grade(problem, sol, correct_answer, subject)
         st.session_state["student_submissions"].append({
-            "student":st.session_state["user_name"],"subject":subject,
-            "problem":problem,"solution":sol,"score":r["score"],
-            "confidence":r["confidence"],"error_type":r["error_type"],
-            "feedback":r["feedback"],"time":datetime.now().strftime("%Y-%m-%d %H:%M")
+            "student": st.session_state["user_name"],
+            "subject": subject,
+            "problem": problem,
+            "solution": sol,
+            "score": r["score"],
+            "confidence": r["confidence"],
+            "error_type": r["error_type"],
+            "feedback": r["feedback"],
+            "time": datetime.now().strftime("%Y-%m-%d %H:%M")
         })
         st.markdown("---")
         show_results(r)
@@ -628,31 +659,27 @@ border:3px solid {col};letter-spacing:4px;margin:8px 0">
 
 elif page == "My Results":
     st.title("My Results")
-    mine = [s for s in st.session_state["student_submissions"]
-            if s["student"]==st.session_state["user_name"]]
+    mine = [s for s in st.session_state["student_submissions"] if s["student"] == st.session_state["user_name"]]
     if not mine:
         st.info("No submissions yet.")
     else:
         df = pd.DataFrame(mine)
-        c1,c2,c3 = st.columns(3)
+        c1, c2, c3 = st.columns(3)
         c1.metric("Submissions", len(df))
-        c2.metric("Average",     f"{df['score'].mean():.1f}/10")
-        c3.metric("Best",        f"{df['score'].max()}/10")
+        c2.metric("Average", f"{df['score'].mean():.1f}/10")
+        c3.metric("Best", f"{df['score'].max()}/10")
         st.markdown("---")
-        for _,row in df.iterrows():
-            bc = "#c8e6c9" if row["score"]>=8 else "#fff9c4" if row["score"]>=5 else "#ffcdd2"
+        for _, row in df.iterrows():
+            bc = "#c8e6c9" if row["score"] >= 8 else "#fff9c4" if row["score"] >= 5 else "#ffcdd2"
             st.markdown(f"""<div style="background:{bc};padding:14px 18px;border-radius:10px;
 margin:6px 0;border-left:4px solid #39FF14;color:#000">
-<b>{row["time"]}</b> — {row["subject"]} — Score: <b>{row["score"]}/10</b><br>
-Problem: {row["problem"]}<br>Feedback: {row["feedback"]}
+<b>{row['time']}</b> — {row['subject']} — Score: <b>{row['score']}/10</b><br>
+Problem: {row['problem']}<br>Feedback: {row['feedback']}
 </div>""", unsafe_allow_html=True)
-        fig = px.line(df,x="time",y="score",markers=True,
-                      title="Score Progress",color_discrete_sequence=["#39FF14"])
-        fig.update_layout(plot_bgcolor="white",paper_bgcolor="white",
-                          font_color="#000000",yaxis_range=[0,10])
-        st.plotly_chart(fig, use_container_width=True)
-        st.download_button("Download My Results",data=df.to_csv(index=False),
-                           file_name="my_results.csv",mime="text/csv")
+        fig = px.line(df, x="time", y="score", markers=True, title="Score Progress", color_discrete_sequence=["#39FF14"])
+        fig.update_layout(plot_bgcolor="white", paper_bgcolor="white", font_color="#000000", yaxis_range=[0, 10])
+        st.plotly_chart(fig, width="stretch")
+        st.download_button("Download My Results", data=df.to_csv(index=False), file_name="my_results.csv", mime="text/csv")
 
 elif page == "Leaderboard":
     st.title("Leaderboard")
@@ -662,44 +689,53 @@ elif page == "Leaderboard":
         st.info("No submissions yet.")
     else:
         df = pd.DataFrame(subs)
-        lb = df.groupby("student")["score"].agg(["mean","max","count"]).reset_index()
-        lb.columns = ["Student","Average","Best","Submissions"]
+        lb = df.groupby("student")["score"].agg(["mean", "max", "count"]).reset_index()
+        lb.columns = ["Student", "Average", "Best", "Submissions"]
         lb["Average"] = lb["Average"].round(1)
-        lb = lb.sort_values("Average",ascending=False).reset_index(drop=True)
-        medals = ["🥇","🥈","🥉"]
-        for i,row in lb.iterrows():
-            m = medals[i] if i<3 else "🎖️"
+        lb = lb.sort_values("Average", ascending=False).reset_index(drop=True)
+        medals = ["🥇", "🥈", "🥉"]
+        for i, row in lb.iterrows():
+            m = medals[i] if i < 3 else "🎖️"
             st.markdown(f"""<div style="background:#fff;padding:14px 20px;border-radius:12px;
 margin:6px 0;border-left:5px solid #39FF14;box-shadow:0 2px 8px rgba(0,0,0,0.06);color:#000">
-{m} <b>#{i+1} {row["Student"].title()}</b> &nbsp;|&nbsp;
-Average: <b>{row["Average"]}/10</b> &nbsp;|&nbsp;
-Best: {row["Best"]}/10 &nbsp;|&nbsp; {int(row["Submissions"])} submissions
+{m} <b>#{i+1} {row['Student'].title()}</b> &nbsp;|&nbsp;
+Average: <b>{row['Average']}/10</b> &nbsp;|&nbsp;
+Best: {row['Best']}/10 &nbsp;|&nbsp; {int(row['Submissions'])} submissions
 </div>""", unsafe_allow_html=True)
-        fig = px.bar(lb,x="Student",y="Average",color="Average",
-                     color_continuous_scale=["#f44336","#FF9800","#39FF14"],
-                     title="Average Scores",range_y=[0,10])
-        fig.update_layout(plot_bgcolor="white",paper_bgcolor="white",font_color="#000000")
-        st.plotly_chart(fig, use_container_width=True)
+        fig = px.bar(
+            lb,
+            x="Student",
+            y="Average",
+            color="Average",
+            color_continuous_scale=["#f44336", "#FF9800", "#39FF14"],
+            title="Average Scores",
+            range_y=[0, 10]
+        )
+        fig.update_layout(plot_bgcolor="white", paper_bgcolor="white", font_color="#000000")
+        st.plotly_chart(fig, width="stretch")
 
 elif page == "Question Bank":
     st.title("Question Bank")
     st.markdown("---")
     st.subheader("Add New Problem")
-    c1,c2 = st.columns(2)
+    c1, c2 = st.columns(2)
     with c1:
-        qs = st.selectbox("Subject",   list(SAMPLES.keys()), key="qb_s")
-        qp = st.text_input("Problem Statement",              key="qb_p")
-        qa = st.text_input("Correct Answer",                 key="qb_a")
+        qs = st.selectbox("Subject", list(SAMPLES.keys()), key="qb_s")
+        qp = st.text_input("Problem Statement", key="qb_p")
+        qa = st.text_input("Correct Answer", key="qb_a")
     with c2:
-        qd = st.selectbox("Difficulty",["Easy","Medium","Hard"], key="qb_d")
-        qn = st.text_area("Notes",height=100,                key="qb_n")
+        qd = st.selectbox("Difficulty", ["Easy", "Medium", "Hard"], key="qb_d")
+        qn = st.text_area("Notes", height=100, key="qb_n")
     if st.button("Add to Question Bank"):
         if qp and qa:
             st.session_state["question_bank"].append({
-                "subject":qs,"problem":qp,"answer":qa,
-                "difficulty":qd,"notes":qn,
-                "added_by":st.session_state["user_name"],
-                "time":datetime.now().strftime("%Y-%m-%d %H:%M")
+                "subject": qs,
+                "problem": qp,
+                "answer": qa,
+                "difficulty": qd,
+                "notes": qn,
+                "added_by": st.session_state["user_name"],
+                "time": datetime.now().strftime("%Y-%m-%d %H:%M")
             })
             st.success("Added!")
         else:
@@ -709,22 +745,24 @@ elif page == "Question Bank":
     if not st.session_state["question_bank"]:
         st.info("No problems yet.")
     else:
-        fs = st.selectbox("Filter",["All"]+list(SAMPLES.keys()), key="qb_f")
-        for i,q in enumerate([x for x in st.session_state["question_bank"]
-                               if fs=="All" or x["subject"]==fs]):
-            dc = {"Easy":"#c8e6c9","Medium":"#fff9c4","Hard":"#ffcdd2"}.get(q["difficulty"],"#f0f0f0")
+        fs = st.selectbox("Filter", ["All"] + list(SAMPLES.keys()), key="qb_f")
+        for i, q in enumerate([x for x in st.session_state["question_bank"] if fs == "All" or x["subject"] == fs]):
+            dc = {"Easy": "#c8e6c9", "Medium": "#fff9c4", "Hard": "#ffcdd2"}.get(q["difficulty"], "#f0f0f0")
             st.markdown(f"""<div style="background:#fff;padding:16px;border-radius:10px;
 border-left:4px solid #39FF14;margin:8px 0;box-shadow:0 2px 6px rgba(0,0,0,0.05);color:#000">
-<b>#{i+1} [{q["subject"]}]</b>
+<b>#{i+1} [{q['subject']}]</b>
 <span style="background:{dc};padding:2px 8px;border-radius:6px;font-size:0.8em;margin-left:6px">
-{q["difficulty"]}</span><br>
-<b>Problem:</b> {q["problem"]}<br>
-<b>Answer:</b> {q["answer"]}<br>
-<small>Added by {q["added_by"]} at {q["time"]}</small>
+{q['difficulty']}</span><br>
+<b>Problem:</b> {q['problem']}<br>
+<b>Answer:</b> {q['answer']}<br>
+<small>Added by {q['added_by']} at {q['time']}</small>
 </div>""", unsafe_allow_html=True)
-        st.download_button("Export Question Bank",
-                           data=pd.DataFrame(st.session_state["question_bank"]).to_csv(index=False),
-                           file_name="question_bank.csv", mime="text/csv")
+        st.download_button(
+            "Export Question Bank",
+            data=pd.DataFrame(st.session_state["question_bank"]).to_csv(index=False),
+            file_name="question_bank.csv",
+            mime="text/csv"
+        )
 
 elif page == "Single Student":
     st.title("Single Student Grader")
@@ -732,17 +770,17 @@ elif page == "Single Student":
     if not api_key:
         st.warning("No API key. Enter it in the sidebar.")
     smp = SAMPLES.get(subject, SAMPLES["Algebra"])
-    c1,c2 = st.columns(2)
+    c1, c2 = st.columns(2)
     with c1:
-        problem        = st.text_input("Problem",        smp[0])
+        problem = st.text_input("Problem", smp[0])
         correct_answer = st.text_input("Correct Answer", smp[1])
     with c2:
-        method = st.radio("Input Method",["Type solution","Upload handwritten image"])
+        method = st.radio("Input Method", ["Type solution", "Upload handwritten image"])
     sol = ""
     if method == "Type solution":
         sol = st.text_area("Student Solution", smp[2], height=130)
     else:
-        f = st.file_uploader("Upload image", type=["jpg","jpeg","png"])
+        f = st.file_uploader("Upload image", type=["jpg", "jpeg", "png"])
         if f:
             st.image(f, width=380)
             if st.button("Read Handwriting"):
@@ -752,11 +790,14 @@ elif page == "Single Student":
                     st.success("Extracted!")
                     st.session_state["extracted_solution"] = result
         if st.session_state["extracted_solution"]:
-            sol = st.text_area("Extracted Solution",
-                               st.session_state["extracted_solution"], height=130)
-    if st.button("Grade Now", use_container_width=True):
-        if not api_key: st.error("No API key."); st.stop()
-        if not sol.strip(): st.warning("Enter a solution."); st.stop()
+            sol = st.text_area("Extracted Solution", st.session_state["extracted_solution"], height=130)
+    if st.button("Grade Now", width="stretch"):
+        if not api_key:
+            st.error("No API key.")
+            st.stop()
+        if not sol.strip():
+            st.warning("Enter a solution.")
+            st.stop()
         with st.spinner("Grading..."):
             r = run_grade(problem, sol, correct_answer, subject)
         st.markdown("---")
@@ -767,108 +808,123 @@ elif page == "Teacher Dashboard":
     st.markdown("---")
     if not api_key:
         st.warning("No API key. Enter it in the sidebar.")
-    c1,c2 = st.columns(2)
+    c1, c2 = st.columns(2)
     with c1:
-        problem        = st.text_input("Problem for whole class","Solve for x: 2*x + 3 = 7")
-        correct_answer = st.text_input("Correct Answer","2")
+        problem = st.text_input("Problem for whole class", "Solve for x: 2*x + 3 = 7")
+        correct_answer = st.text_input("Correct Answer", "2")
     with c2:
         st.info("Upload up to 30 student images OR paste solutions below.")
-    method = st.radio("Input Method",["Paste solutions","Upload student images"])
-    names,solutions = [],[]
+    method = st.radio("Input Method", ["Paste solutions", "Upload student images"])
+    names, solutions = [], []
     if method == "Paste solutions":
-        raw = st.text_area("Student solutions (Name: solution per line)",
+        raw = st.text_area(
+            "Student solutions (Name: solution per line)",
             "Alice: 2*x + 3 = 7; 2*x = 4; x = 2\nBob: 2*x + 3 = 7; 2*x = 10; x = 5\nCarol: 2*x + 3 = 7; 2*x = 4; x = 2\nDavid: 2*x + 3 = 7; 2*x = 6; x = 3",
-            height=180)
+            height=180
+        )
         for line in raw.strip().split("\n"):
             if ":" in line:
-                n,s = line.split(":",1)
+                n, s = line.split(":", 1)
                 names.append(n.strip())
                 solutions.append(s.strip())
     else:
-        files = st.file_uploader("Upload images",type=["jpg","jpeg","png"],accept_multiple_files=True)
+        files = st.file_uploader("Upload images", type=["jpg", "jpeg", "png"], accept_multiple_files=True)
         if files:
             for f in files[:30]:
-                names.append(f.name.rsplit(".",1)[0])
+                names.append(f.name.rsplit(".", 1)[0])
                 with st.spinner(f"Reading {f.name}..."):
                     solutions.append(read_image(f.read(), problem, subject))
             st.success(f"Read {len(files)} images!")
 
-    if st.button("Grade All Students", use_container_width=True) and solutions:
-        if not api_key: st.error("No API key."); st.stop()
-        rows,prog,status = [],st.progress(0),st.empty()
-        for i,(name,sol) in enumerate(zip(names,solutions)):
+    if st.button("Grade All Students", width="stretch") and solutions:
+        if not api_key:
+            st.error("No API key.")
+            st.stop()
+        rows, prog, status = [], st.progress(0), st.empty()
+        for i, (name, sol) in enumerate(zip(names, solutions)):
             status.text(f"Grading {name}... ({i+1}/{len(solutions)})")
             r = run_grade(problem, sol, correct_answer, subject)
-            rows.append({"Student":name,"Score":r["score"],"Confidence":r["confidence"],
-                         "Error Type":r["error_type"],"Human Review":r["needs_review"],
-                         "Feedback":r["feedback"]})
-            prog.progress((i+1)/len(solutions))
+            rows.append({
+                "Student": name,
+                "Score": r["score"],
+                "Confidence": r["confidence"],
+                "Error Type": r["error_type"],
+                "Human Review": r["needs_review"],
+                "Feedback": r["feedback"]
+            })
+            prog.progress((i + 1) / len(solutions))
         status.text("Done!")
         df = pd.DataFrame(rows)
         st.session_state["class_results"] = df
         avg = df["Score"].mean()
-        top = df.loc[df["Score"].idxmax(),"Student"]
+        top = df.loc[df["Score"].idxmax(), "Student"]
         rev = int(df["Human Review"].sum())
-        c1,c2,c3,c4 = st.columns(4)
-        c1.metric("Average",     f"{avg:.1f}/10")
+        c1, c2, c3, c4 = st.columns(4)
+        c1.metric("Average", f"{avg:.1f}/10")
         c2.metric("Top Student", top)
         c3.metric("Need Review", f"{rev}/{len(df)}")
-        c4.metric("Total",       len(df))
+        c4.metric("Total", len(df))
         st.markdown("---")
 
-        def cscore(v):
-            if v>=8: return "background-color:#c8e6c9;color:#000"
-            if v>=5: return "background-color:#fff9c4;color:#000"
-            return "background-color:#ffcdd2;color:#000"
+        # Simple dataframe is used here to avoid pandas Styler/applymap issues on Streamlit Cloud.
+        st.dataframe(df, width="stretch")
 
-       st.dataframe(
-    df.style.map(cscore, subset=["Score"]),
-    width="stretch"
-)
-        c1,c2 = st.columns(2)
+        c1, c2 = st.columns(2)
         with c1:
-            fig = px.bar(df,x="Student",y="Score",color="Score",
-                         color_continuous_scale=["#f44336","#FF9800","#39FF14"],
-                         title="Scores",range_y=[0,10])
-            fig.update_layout(plot_bgcolor="white",paper_bgcolor="white",font_color="#000000")
-            st.plotly_chart(fig,use_container_width=True)
+            fig = px.bar(
+                df,
+                x="Student",
+                y="Score",
+                color="Score",
+                color_continuous_scale=["#f44336", "#FF9800", "#39FF14"],
+                title="Scores",
+                range_y=[0, 10]
+            )
+            fig.update_layout(plot_bgcolor="white", paper_bgcolor="white", font_color="#000000")
+            st.plotly_chart(fig, width="stretch")
         with c2:
             ec = df["Error Type"].value_counts().reset_index()
-            ec.columns = ["Error Type","Count"]
-            fig2 = px.pie(ec,values="Count",names="Error Type",title="Error Distribution")
-            fig2.update_layout(plot_bgcolor="white",paper_bgcolor="white",font_color="#000000")
-            st.plotly_chart(fig2,use_container_width=True)
+            ec.columns = ["Error Type", "Count"]
+            fig2 = px.pie(ec, values="Count", names="Error Type", title="Error Distribution")
+            fig2.update_layout(plot_bgcolor="white", paper_bgcolor="white", font_color="#000000")
+            st.plotly_chart(fig2, width="stretch")
         st.markdown("---")
         st.subheader("Email Report")
-        c1,c2 = st.columns(2)
+        c1, c2 = st.columns(2)
         with c1:
-            gmail = st.text_input("Your Gmail",         placeholder="you@gmail.com")
-            gpwd  = st.text_input("Gmail App Password", type="password")
-            to    = st.text_input("Send to",            placeholder="teacher@school.com")
+            gmail = st.text_input("Your Gmail", placeholder="you@gmail.com")
+            gpwd = st.text_input("Gmail App Password", type="password")
+            to = st.text_input("Send to", placeholder="teacher@school.com")
         with c2:
             body = f"STEMGrade Report\nProblem: {problem}\nSubject: {subject}\nTotal: {len(df)}\nAverage: {avg:.1f}/10\nTop: {top}\n\n"
-            for _,row in df.iterrows():
+            for _, row in df.iterrows():
                 body += f"{row['Student']}: {row['Score']}/10 - {row['Feedback']}\n"
             st.text_area("Preview", body, height=150)
-        c1,c2 = st.columns(2)
+        c1, c2 = st.columns(2)
         with c1:
             if st.button("Send Email Report"):
                 if gmail and gpwd and to:
                     try:
                         msg = MIMEMultipart()
-                        msg["From"]=gmail; msg["To"]=to
-                        msg["Subject"]=f"STEMGrade Report ({subject})"
-                        msg.attach(MIMEText(body,"plain"))
-                        with smtplib.SMTP_SSL("smtp.gmail.com",465) as s:
-                            s.login(gmail,gpwd); s.sendmail(gmail,to,msg.as_string())
+                        msg["From"] = gmail
+                        msg["To"] = to
+                        msg["Subject"] = f"STEMGrade Report ({subject})"
+                        msg.attach(MIMEText(body, "plain"))
+                        with smtplib.SMTP_SSL("smtp.gmail.com", 465) as s:
+                            s.login(gmail, gpwd)
+                            s.sendmail(gmail, to, msg.as_string())
                         st.success(f"Sent to {to}!")
                     except Exception as e:
                         st.error(f"Email failed: {e}")
                 else:
                     st.warning("Fill all email fields.")
         with c2:
-            st.download_button("Download CSV",data=df.to_csv(index=False),
-                               file_name="class_grades.csv",mime="text/csv")
+            st.download_button(
+                "Download CSV",
+                data=df.to_csv(index=False),
+                file_name="class_grades.csv",
+                mime="text/csv"
+            )
 
 elif page == "Student Submissions":
     st.title("Student Submissions")
@@ -878,19 +934,24 @@ elif page == "Student Submissions":
         st.info("No submissions yet.")
     else:
         df = pd.DataFrame(subs)
-        c1,c2,c3 = st.columns(3)
-        c1.metric("Total",    len(df))
-        c2.metric("Average",  f"{df['score'].mean():.1f}/10")
+        c1, c2, c3 = st.columns(3)
+        c1.metric("Total", len(df))
+        c2.metric("Average", f"{df['score'].mean():.1f}/10")
         c3.metric("Students", df["student"].nunique())
-        fs = st.selectbox("Filter",["All"]+sorted(df["student"].unique().tolist()))
-        st.dataframe(df if fs=="All" else df[df["student"]==fs], use_container_width=True)
-        fig = px.bar(df,x="student",y="score",color="score",
-                     color_continuous_scale=["#f44336","#FF9800","#39FF14"],
-                     title="Scores",range_y=[0,10])
-        fig.update_layout(plot_bgcolor="white",paper_bgcolor="white",font_color="#000000")
-        st.plotly_chart(fig,use_container_width=True)
-        st.download_button("Download All",data=df.to_csv(index=False),
-                           file_name="submissions.csv",mime="text/csv")
+        fs = st.selectbox("Filter", ["All"] + sorted(df["student"].unique().tolist()))
+        st.dataframe(df if fs == "All" else df[df["student"] == fs], width="stretch")
+        fig = px.bar(
+            df,
+            x="student",
+            y="score",
+            color="score",
+            color_continuous_scale=["#f44336", "#FF9800", "#39FF14"],
+            title="Scores",
+            range_y=[0, 10]
+        )
+        fig.update_layout(plot_bgcolor="white", paper_bgcolor="white", font_color="#000000")
+        st.plotly_chart(fig, width="stretch")
+        st.download_button("Download All", data=df.to_csv(index=False), file_name="submissions.csv", mime="text/csv")
 
 elif page == "Analytics":
     st.title("Analytics")
@@ -899,21 +960,28 @@ elif page == "Analytics":
         st.info("Grade a class first in Teacher Dashboard.")
     else:
         df = st.session_state["class_results"]
-        c1,c2 = st.columns(2)
+        c1, c2 = st.columns(2)
         with c1:
-            fig = px.histogram(df,x="Score",nbins=10,title="Score Distribution",
-                               color_discrete_sequence=["#39FF14"])
-            fig.update_layout(plot_bgcolor="white",paper_bgcolor="white",font_color="#000000")
-            st.plotly_chart(fig,use_container_width=True)
+            fig = px.histogram(df, x="Score", nbins=10, title="Score Distribution", color_discrete_sequence=["#39FF14"])
+            fig.update_layout(plot_bgcolor="white", paper_bgcolor="white", font_color="#000000")
+            st.plotly_chart(fig, width="stretch")
         with c2:
-            fig2 = px.box(df,y="Score",title="Score Spread",color_discrete_sequence=["#000000"])
-            fig2.update_layout(plot_bgcolor="white",paper_bgcolor="white",font_color="#000000")
-            st.plotly_chart(fig2,use_container_width=True)
-        fig3 = px.bar(df,x="Student",y="Confidence",color="Confidence",
-                      color_continuous_scale=["#f44336","#FF9800","#39FF14"],
-                      title="Confidence by Student")
-        fig3.update_layout(plot_bgcolor="white",paper_bgcolor="white",font_color="#000000")
-        st.plotly_chart(fig3,use_container_width=True)
-        rev = df[df["Human Review"]==True][["Student","Score","Error Type","Feedback"]]
+            fig2 = px.box(df, y="Score", title="Score Spread", color_discrete_sequence=["#000000"])
+            fig2.update_layout(plot_bgcolor="white", paper_bgcolor="white", font_color="#000000")
+            st.plotly_chart(fig2, width="stretch")
+        fig3 = px.bar(
+            df,
+            x="Student",
+            y="Confidence",
+            color="Confidence",
+            color_continuous_scale=["#f44336", "#FF9800", "#39FF14"],
+            title="Confidence by Student"
+        )
+        fig3.update_layout(plot_bgcolor="white", paper_bgcolor="white", font_color="#000000")
+        st.plotly_chart(fig3, width="stretch")
+        rev = df[df["Human Review"] == True][["Student", "Score", "Error Type", "Feedback"]]
         st.subheader("Students Needing Review")
-        st.dataframe(rev,use_container_width=True) if len(rev)>0 else st.success("No students need review!")
+        if len(rev) > 0:
+            st.dataframe(rev, width="stretch")
+        else:
+            st.success("No students need review!")
