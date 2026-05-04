@@ -821,7 +821,10 @@ elif page == "Teacher Dashboard":
             if v>=5: return "background-color:#fff9c4;color:#000"
             return "background-color:#ffcdd2;color:#000"
 
-        st.dataframe(df.style.applymap(cscore,subset=["Score"]),use_container_width=True)
+       st.dataframe(
+    df.style.map(cscore, subset=["Score"]),
+    width="stretch"
+)
         c1,c2 = st.columns(2)
         with c1:
             fig = px.bar(df,x="Student",y="Score",color="Score",
