@@ -3,6 +3,7 @@ import re
 import io
 import base64
 from datetime import datetime
+from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
 import streamlit as st
@@ -30,6 +31,7 @@ except Exception:
 # - Batch grade class submissions
 # - Detect final answer correctness, reasoning issues, confidence, and review flags
 # - Export CSV and PDF reports
+# - Displays custom STEMGrade AI logo from assets/logo.png
 #
 # Important production note:
 # This is still an MVP. Before public/commercial launch, move auth,
@@ -48,10 +50,11 @@ st.set_page_config(
     initial_sidebar_state="collapsed",
 )
 
-APP_VERSION = "4.1 MVP"
+APP_VERSION = "4.2 MVP"
 DEFAULT_ACCESS_CODE = os.getenv("TUTOR_ACCESS_CODE", "demo-tutor")
 STRIPE_PAYMENT_LINK = os.getenv("STRIPE_PAYMENT_LINK", "")
 SUPPORT_EMAIL = os.getenv("SUPPORT_EMAIL", "support@stemgrade.ai")
+LOGO_PATH = Path("assets/logo.png")
 
 
 # -----------------------------
@@ -83,9 +86,23 @@ st.markdown(
     }
 
     .block-container {
-        padding-top: 1.6rem;
+        padding-top: 1.4rem;
         padding-bottom: 3rem;
         max-width: 1380px;
+    }
+
+    .brand-row {
+        display: flex;
+        align-items: center;
+        gap: 0.85rem;
+        margin-bottom: 0.2rem;
+    }
+
+    .brand-fallback {
+        font-size: 1.65rem;
+        font-weight: 900;
+        color: #0F172A;
+        margin-bottom: 0.1rem;
     }
 
     .hero {
@@ -144,6 +161,16 @@ st.markdown(
         font-weight: 800;
         font-size: 0.82rem;
         margin-bottom: 0.8rem;
+    }
+
+    .pilot-note {
+        background: #EFF6FF;
+        border: 1px solid #BFDBFE;
+        color: #1E3A8A;
+        padding: 0.8rem 1rem;
+        border-radius: 12px;
+        font-weight: 600;
+        margin-bottom: 1rem;
     }
 
     .step-box {
@@ -315,7 +342,6 @@ def valid_transition(previous_step: str, current_step: str) -> bool:
         prev_var, prev_solutions = solve_equation_step(previous_step)
         curr_var, curr_solutions = solve_equation_step(current_step)
 
-        # If symbolic validation is not possible, do not automatically mark it wrong.
         if prev_var is None or curr_var is None:
             return True
         if not prev_solutions or not curr_solutions:
@@ -566,6 +592,13 @@ def create_pdf_report(title: str, subtitle: str, df: pd.DataFrame, notes: str = 
 # -----------------------------
 # UI helpers
 # -----------------------------
+def show_logo(width: int = 320) -> None:
+    if LOGO_PATH.exists():
+        st.image(str(LOGO_PATH), width=width)
+    else:
+        st.markdown('<div class="brand-fallback">📘 STEMGrade AI</div>', unsafe_allow_html=True)
+
+
 def html_card(title: str, body: str) -> None:
     st.markdown(
         f"""
@@ -677,7 +710,7 @@ SAMPLE_BY_SUBJECT = {
 # -----------------------------
 # Top navigation
 # -----------------------------
-st.markdown("## 📘 STEMGrade AI")
+show_logo(width=280)
 st.caption(f"Tutor SaaS MVP · v{APP_VERSION}")
 
 if st.session_state["authenticated"]:
@@ -713,6 +746,15 @@ if page == "Landing":
   <span class="pill">Tutor-focused MVP</span>
   <h1>Grade handwritten STEM work faster.</h1>
   <p>STEMGrade AI helps tutors upload student solutions, detect the first wrong step, and generate review-ready feedback reports.</p>
+</div>
+""",
+        unsafe_allow_html=True,
+    )
+
+    st.markdown(
+        """
+<div class="pilot-note">
+Pilot note: Please use anonymized student submissions only. Do not upload student names, IDs, emails, or sensitive personal information.
 </div>
 """,
         unsafe_allow_html=True,
@@ -778,14 +820,18 @@ elif page == "Dashboard":
         top_students = latest_df[latest_df["Score"] == max_score]["Student"].tolist()
         top_student_display = ", ".join(top_students)
     else:
+        max_score = 0
         top_student_display = "—"
 
     m1, m2, m3, m4 = st.columns(4)
     m1.metric("Latest Submissions", total_submissions)
-    m2.metric("Top Students", top_student_display)
+    m2.metric("Top Score", f"{max_score}/10" if total_submissions else "—")
     m3.metric("Need Review", review_count if total_submissions else "—")
     m4.metric("Batches", total_batches)
+
     st.caption(f"Latest Average: {avg_score:.1f}/10" if total_submissions else "Latest Average: —")
+    if total_submissions:
+        st.info(f"Top Students: {top_student_display}")
 
     st.markdown("---")
     c1, c2 = st.columns(2)
@@ -954,7 +1000,6 @@ elif page == "Batch Grade":
         m4.metric("Total", len(df))
 
         st.info(f"Top Students: {top_student_display}")
-
         st.dataframe(df, use_container_width=True, hide_index=True)
 
         c1, c2 = st.columns(2)
