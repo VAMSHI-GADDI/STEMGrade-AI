@@ -685,30 +685,34 @@ SAMPLE_BY_SUBJECT = {
 
 
 # -----------------------------
-# Sidebar
+# Top navigation
 # -----------------------------
-with st.sidebar:
-    st.markdown("## 📘 STEMGrade AI")
-    st.caption(f"Tutor SaaS MVP · v{APP_VERSION}")
-    st.markdown("---")
+# Sidebar-free navigation is used because Streamlit sidebars can be hidden
+# on some screen sizes or hosted deployments.
+st.markdown("## 📘 STEMGrade AI")
+st.caption(f"Tutor SaaS MVP · v{APP_VERSION}")
 
-    if st.session_state["authenticated"]:
+if st.session_state["authenticated"]:
+    top_left, top_right = st.columns([3, 1])
+    with top_left:
         st.success(f"Signed in as {st.session_state['tutor_name'] or 'Tutor'}")
-        page = st.radio(
-            "Workspace",
-            ["Dashboard", "Grade One", "Batch Grade", "Reports", "Settings"],
-            label_visibility="visible",
-        )
-        st.markdown("---")
-        subject = st.selectbox("Subject", SUBJECTS)
-        if st.button("Sign out"):
+    with top_right:
+        if st.button("Sign out", use_container_width=True):
             for key, value in DEFAULTS.items():
                 st.session_state[key] = value
             st.rerun()
-    else:
-        page = "Landing"
-        subject = "Algebra"
-        st.info("Sign in to access the tutor workspace.")
+
+    page = st.radio(
+        "Workspace",
+        ["Dashboard", "Grade One", "Batch Grade", "Reports", "Settings"],
+        horizontal=True,
+    )
+    subject = st.selectbox("Subject", SUBJECTS, index=0)
+    st.markdown("---")
+else:
+    page = "Landing"
+    subject = "Algebra"
+    st.info("Sign in to access the tutor workspace.")
 
 
 # -----------------------------
