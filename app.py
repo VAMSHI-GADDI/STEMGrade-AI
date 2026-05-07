@@ -708,22 +708,40 @@ if page == "Landing":
         unsafe_allow_html=True,
     )
 
-    c1, c2, c3 = st.columns(3)
-    with c1:
-        card_start()
-        st.markdown("### Step-by-step checking")
-        st.write("Evaluate the reasoning path, not just the final answer.")
-        card_end()
-    with c2:
-        card_start()
-        st.markdown("### Human review flag")
-        st.write("Low-confidence and inconsistent work is routed back to the tutor.")
-        card_end()
-    with c3:
-        card_start()
-        st.markdown("### Class reports")
-        st.write("Batch grade submissions and export CSV/PDF reports for review.")
-        card_end()
+   c1, c2, c3 = st.columns(3)
+
+with c1:
+    st.markdown(
+        """
+<div class="app-card">
+<h3>Step-by-step checking</h3>
+<p>Evaluate the reasoning path, not just the final answer.</p>
+</div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+with c2:
+    st.markdown(
+        """
+<div class="app-card">
+<h3>Human review flag</h3>
+<p>Low-confidence and inconsistent work is routed back to the tutor.</p>
+</div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+with c3:
+    st.markdown(
+        """
+<div class="app-card">
+<h3>Class reports</h3>
+<p>Batch grade submissions and export CSV/PDF reports for review.</p>
+</div>
+        """,
+        unsafe_allow_html=True,
+    )
 
     st.markdown("---")
     left, right = st.columns([1, 1])
