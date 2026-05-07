@@ -45,10 +45,10 @@ st.set_page_config(
     page_title="STEMGrade AI | Tutor Grading Assistant",
     page_icon="📘",
     layout="wide",
-    initial_sidebar_state="expanded",
+    initial_sidebar_state="collapsed",
 )
 
-APP_VERSION = "4.0 MVP"
+APP_VERSION = "4.1 MVP"
 DEFAULT_ACCESS_CODE = os.getenv("TUTOR_ACCESS_CODE", "demo-tutor")
 STRIPE_PAYMENT_LINK = os.getenv("STRIPE_PAYMENT_LINK", "")
 SUPPORT_EMAIL = os.getenv("SUPPORT_EMAIL", "support@stemgrade.ai")
@@ -82,20 +82,10 @@ st.markdown(
         color: var(--text);
     }
 
-    [data-testid="stSidebar"] {
-        background: #0F172A;
-        padding: 1rem;
-    }
-
-    [data-testid="stSidebar"] * {
-        color: #FFFFFF !important;
-    }
-
-    [data-testid="stSidebar"] .stSelectbox div,
-    [data-testid="stSidebar"] .stTextInput input,
-    [data-testid="stSidebar"] [data-baseweb="select"] div {
-        color: #0F172A !important;
-        background: #FFFFFF !important;
+    .block-container {
+        padding-top: 1.6rem;
+        padding-bottom: 3rem;
+        max-width: 1380px;
     }
 
     .hero {
@@ -397,7 +387,7 @@ SUBJECT_PROMPTS = {
 def generate_expected_steps(problem: str, subject: str) -> List[str]:
     client = get_client()
     if client is None:
-        st.error("OpenAI API key is missing. Add it in Settings or Streamlit secrets.")
+        st.error("OpenAI API key is missing. Add it in Streamlit secrets before grading.")
         return []
 
     instruction = SUBJECT_PROMPTS.get(subject, SUBJECT_PROMPTS["Algebra"])
@@ -423,7 +413,7 @@ def generate_expected_steps(problem: str, subject: str) -> List[str]:
 def extract_handwritten_solution(image_bytes: bytes, problem: str, subject: str) -> str:
     client = get_client()
     if client is None:
-        st.error("OpenAI API key is missing. Add it in Settings or Streamlit secrets.")
+        st.error("OpenAI API key is missing. Add it in Streamlit secrets before grading.")
         return ""
 
     try:
@@ -687,8 +677,6 @@ SAMPLE_BY_SUBJECT = {
 # -----------------------------
 # Top navigation
 # -----------------------------
-# Sidebar-free navigation is used because Streamlit sidebars can be hidden
-# on some screen sizes or hosted deployments.
 st.markdown("## 📘 STEMGrade AI")
 st.caption(f"Tutor SaaS MVP · v{APP_VERSION}")
 
@@ -745,10 +733,7 @@ if page == "Landing":
         st.markdown("## Tutor Login")
         tutor_name = st.text_input("Tutor or center name", placeholder="Example: Vamshi Tutoring")
         access_code = st.text_input("Access code", type="password", placeholder="Enter demo or pilot access code")
-        st.caption(
-            "For this MVP, set TUTOR_ACCESS_CODE in environment variables or Streamlit secrets. "
-            "Default demo code: demo-tutor"
-        )
+        st.caption("Default demo code: demo-tutor")
         if st.button("Enter Workspace", use_container_width=True):
             if access_code == DEFAULT_ACCESS_CODE:
                 st.session_state["authenticated"] = True
@@ -788,11 +773,19 @@ elif page == "Dashboard":
     avg_score = 0.0 if latest_df is None or latest_df.empty else latest_df["Score"].mean()
     review_count = 0 if latest_df is None or latest_df.empty else int(latest_df["Human Review"].sum())
 
+    if latest_df is not None and not latest_df.empty:
+        max_score = latest_df["Score"].max()
+        top_students = latest_df[latest_df["Score"] == max_score]["Student"].tolist()
+        top_student_display = ", ".join(top_students)
+    else:
+        top_student_display = "—"
+
     m1, m2, m3, m4 = st.columns(4)
     m1.metric("Latest Submissions", total_submissions)
-    m2.metric("Latest Average", f"{avg_score:.1f}/10" if total_submissions else "—")
+    m2.metric("Top Students", top_student_display)
     m3.metric("Need Review", review_count if total_submissions else "—")
     m4.metric("Batches", total_batches)
+    st.caption(f"Latest Average: {avg_score:.1f}/10" if total_submissions else "Latest Average: —")
 
     st.markdown("---")
     c1, c2 = st.columns(2)
@@ -826,7 +819,7 @@ elif page == "Grade One":
     st.caption("Use this for live tutor demos and one-on-one grading.")
 
     if not get_openai_key():
-        st.warning("OpenAI API key is missing. Add it in Settings or Streamlit secrets before grading.")
+        st.warning("OpenAI API key is missing. Add it in Streamlit Cloud secrets before grading.")
 
     sample = SAMPLE_BY_SUBJECT[subject]
     col1, col2 = st.columns([1, 1])
@@ -875,7 +868,7 @@ elif page == "Batch Grade":
     st.caption("Best for tutor pilots: paste 5-30 anonymized submissions and export a report.")
 
     if not get_openai_key():
-        st.warning("OpenAI API key is missing. Add it in Settings or Streamlit secrets before grading.")
+        st.warning("OpenAI API key is missing. Add it in Streamlit Cloud secrets before grading.")
 
     problem = st.text_input("Assignment problem", value="Solve for x: 2*x + 3 = 7")
     correct_answer = st.text_input("Correct answer", value="2")
@@ -888,7 +881,8 @@ elif page == "Batch Grade":
             "Student A: 2*x + 3 = 7; 2*x = 4; x = 2\n"
             "Student B: 2*x + 3 = 7; 2*x = 10; x = 5\n"
             "Student C: 2*x + 3 = 7; 2*x = 4; x = 2\n"
-            "Student D: 2*x + 3 = 7; 2*x = 6; x = 3"
+            "Student D: 2*x + 3 = 7; 2*x = 6; x = 3\n"
+            "Student E: 2*x + 3 = 7; 2*x = 4; x = 2"
         ),
         height=210,
     )
@@ -948,12 +942,14 @@ elif page == "Batch Grade":
     if df is not None and not df.empty:
         st.markdown("---")
         avg = df["Score"].mean()
-        top_student = df.loc[df["Score"].idxmax(), "Student"]
+        max_score = df["Score"].max()
+        top_students = df[df["Score"] == max_score]["Student"].tolist()
+        top_student_display = ", ".join(top_students)
         review_count = int(df["Human Review"].sum())
 
         m1, m2, m3, m4 = st.columns(4)
         m1.metric("Average", f"{avg:.1f}/10")
-        m2.metric("Top Student", top_student)
+        m2.metric("Top Students", top_student_display)
         m3.metric("Need Review", f"{review_count}/{len(df)}")
         m4.metric("Total", len(df))
 
@@ -1018,6 +1014,20 @@ elif page == "Reports":
             mime="text/csv",
         )
 
+        pdf_bytes = create_pdf_report(
+            title="STEMGrade AI Latest Batch Report",
+            subtitle=f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M')}",
+            df=df,
+            notes="AI-assisted grading report. Tutor review is recommended for all flagged submissions.",
+        )
+        if pdf_bytes:
+            st.download_button(
+                "Download Latest PDF",
+                data=pdf_bytes,
+                file_name="latest_stemgrade_report.pdf",
+                mime="application/pdf",
+            )
+
     st.markdown("---")
     st.markdown("### Pilot History")
     history = st.session_state.get("batch_history", [])
@@ -1032,62 +1042,3 @@ elif page == "Reports":
             file_name="stemgrade_pilot_history.csv",
             mime="text/csv",
         )
-
-
-# -----------------------------
-# Settings
-# -----------------------------
-elif page == "Settings":
-    st.title("Settings")
-    st.caption("Configure the MVP for private pilots.")
-
-    st.markdown("### API Configuration")
-    existing_key = get_openai_key()
-    st.write("OpenAI status:", "Connected" if existing_key else "Missing")
-    key_input = st.text_input("OpenAI API key", type="password", placeholder="sk-...", value="")
-    if st.button("Save API Key"):
-        if key_input.strip():
-            st.session_state["openai_key"] = key_input.strip()
-            st.success("API key saved for this session.")
-        else:
-            st.warning("Enter a valid key.")
-
-    st.markdown("---")
-    st.markdown("### Billing")
-    if STRIPE_PAYMENT_LINK:
-        st.success("Stripe payment link configured.")
-        st.link_button("Open Payment Link", STRIPE_PAYMENT_LINK)
-    else:
-        st.info("Set STRIPE_PAYMENT_LINK in environment variables when you are ready for paid pilots.")
-
-    st.markdown("---")
-    st.markdown("### Privacy Defaults")
-    st.markdown(
-        """
-- Use anonymous student IDs during pilots.
-- Do not upload sensitive personal student information.
-- Review AI grades before sharing them with students.
-- Add production database, encryption, audit logs, deletion workflow, and legal pages before public launch.
-        """
-    )
-
-    st.markdown("---")
-    st.markdown("### Deployment notes")
-    st.code(
-        """
-# requirements.txt
-streamlit
-pandas
-plotly
-sympy
-openai
-reportlab
-
-# Streamlit secrets example
-OPENAI_API_KEY = "paste_your_key_in_streamlit_secrets_not_github"
-TUTOR_ACCESS_CODE = "choose_private_demo_code"
-STRIPE_PAYMENT_LINK = "optional_stripe_payment_link"
-SUPPORT_EMAIL = "your_support_email"
-        """.strip(),
-        language="toml",
-    )
