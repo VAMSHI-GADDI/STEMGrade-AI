@@ -704,7 +704,7 @@ if st.session_state["authenticated"]:
 
     page = st.radio(
         "Workspace",
-        ["Dashboard", "Grade One", "Batch Grade", "Reports", "Settings"],
+        ["Dashboard", "Grade One", "Batch Grade", "Reports"],
         horizontal=True,
     )
     subject = st.selectbox("Subject", SUBJECTS, index=0)
