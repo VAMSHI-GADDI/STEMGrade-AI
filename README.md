@@ -7,7 +7,13 @@
 
 **🔗 App: https://stemgrade-ai-vamshi-gaddi.streamlit.app**
 
-**Teacher login:** `teacher` / `teach@123` &nbsp;|&nbsp; **Student login:** `demo` / `demo@123`
+# STEMGrade AI
+
+**STEMGrade AI** is an AI-assisted grading tool designed to help tutors review STEM solutions faster, detect step-by-step reasoning mistakes, flag answers that need human review, and export CSV/PDF reports.
+
+**Built by:** Vamshi  
+**Demo Video:** [Watch here](https://drive.google.com/file/d/1TNnBRtTrAitZ7InbGyMqldjjehWaMq7y/view?usp=sharing)  
+**Live App:** [Open Streamlit App](https://stemgrade-ai-vamshi-gaddi.streamlit.app/)
 
 ---
 
