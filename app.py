@@ -949,9 +949,11 @@ elif page == "Batch Grade":
 
         m1, m2, m3, m4 = st.columns(4)
         m1.metric("Average", f"{avg:.1f}/10")
-        m2.metric("Top Students", top_student_display)
+        m2.metric("Top Score", f"{max_score}/10")
         m3.metric("Need Review", f"{review_count}/{len(df)}")
         m4.metric("Total", len(df))
+
+        st.info(f"Top Students: {top_student_display}")
 
         st.dataframe(df, use_container_width=True, hide_index=True)
 
