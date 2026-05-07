@@ -16,11 +16,6 @@
 **Live App:** [Open Streamlit App](https://stemgrade-ai-vamshi-gaddi.streamlit.app/)
 
 ---
-
-## 📸 Demo
-
-![STEMGrade AI Demo](demo.png)
-
 ---
 
 ## What It Does
