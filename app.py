@@ -1,7 +1,6 @@
 import os
 import re
 import io
-import json
 import base64
 from datetime import datetime
 from typing import Dict, List, Optional, Tuple
@@ -23,16 +22,19 @@ except Exception:
 
 
 # ============================================================
-# STEMGrade AI - Clean Tutor-Focused SaaS MVP
-# ------------------------------------------------------------
-# Purpose:
-#   AI-assisted grading for tutors and tutoring centers.
-#   Upload/paste STEM solutions, identify first wrong step,
-#   generate review-ready feedback, and export reports.
+# STEMGrade AI - Tutor-Focused SaaS MVP
+# ============================================================
+# What this app does:
+# - Private tutor login with access code
+# - Grade one STEM solution
+# - Batch grade class submissions
+# - Detect final answer correctness, reasoning issues, confidence, and review flags
+# - Export CSV and PDF reports
 #
-# Important:
-#   This is an MVP. For production, move authentication,
-#   storage, billing, rate limits, and audit logs to a backend.
+# Important production note:
+# This is still an MVP. Before public/commercial launch, move auth,
+# database, billing, student data storage, audit logs, rate limits,
+# and privacy controls to a real backend.
 # ============================================================
 
 
@@ -47,7 +49,6 @@ st.set_page_config(
 )
 
 APP_VERSION = "4.0 MVP"
-APP_NAME = "STEMGrade AI"
 DEFAULT_ACCESS_CODE = os.getenv("TUTOR_ACCESS_CODE", "demo-tutor")
 STRIPE_PAYMENT_LINK = os.getenv("STRIPE_PAYMENT_LINK", "")
 SUPPORT_EMAIL = os.getenv("SUPPORT_EMAIL", "support@stemgrade.ai")
@@ -97,21 +98,13 @@ st.markdown(
         background: #FFFFFF !important;
     }
 
-    .app-card {
-        background: var(--card);
-        border: 1px solid var(--border);
-        border-radius: 18px;
-        padding: 1.4rem;
-        box-shadow: 0 8px 24px rgba(15, 23, 42, 0.06);
-        margin-bottom: 1rem;
-    }
-
     .hero {
         background: linear-gradient(135deg, #1E3A8A 0%, #2563EB 55%, #38BDF8 100%);
         border-radius: 24px;
         padding: 3rem 2.2rem;
         color: #FFFFFF;
         margin-bottom: 1.5rem;
+        box-shadow: 0 18px 40px rgba(37, 99, 235, 0.20);
     }
 
     .hero h1 {
@@ -119,6 +112,7 @@ st.markdown(
         font-size: 3rem;
         font-weight: 900;
         margin-bottom: 0.5rem;
+        line-height: 1.1;
     }
 
     .hero p {
@@ -127,16 +121,28 @@ st.markdown(
         max-width: 850px;
     }
 
-    .section-title {
-        color: #0F172A !important;
-        font-size: 1.5rem;
-        font-weight: 800;
-        margin-top: 0.4rem;
-        margin-bottom: 0.8rem;
+    .app-card {
+        background: #FFFFFF;
+        border: 1px solid #E2E8F0;
+        border-radius: 18px;
+        padding: 1.3rem 1.4rem;
+        box-shadow: 0 8px 24px rgba(15, 23, 42, 0.06);
+        margin-bottom: 1rem;
+        min-height: 120px;
     }
 
-    .muted {
-        color: var(--muted) !important;
+    .app-card h3 {
+        color: #0F172A !important;
+        font-size: 1.25rem;
+        font-weight: 800;
+        margin-top: 0;
+        margin-bottom: 0.5rem;
+    }
+
+    .app-card p, .app-card li {
+        color: #475569 !important;
+        font-size: 0.98rem;
+        line-height: 1.55;
     }
 
     .pill {
@@ -145,24 +151,9 @@ st.markdown(
         border-radius: 999px;
         background: #DBEAFE;
         color: #1E40AF;
-        font-weight: 700;
+        font-weight: 800;
         font-size: 0.82rem;
-        margin-right: 0.35rem;
-    }
-
-    .danger-pill {
-        background: #FEE2E2;
-        color: #991B1B;
-    }
-
-    .success-pill {
-        background: #DCFCE7;
-        color: #166534;
-    }
-
-    .warning-pill {
-        background: #FEF3C7;
-        color: #92400E;
+        margin-bottom: 0.8rem;
     }
 
     .step-box {
@@ -240,6 +231,7 @@ for key, value in DEFAULTS.items():
 # Config helpers
 # -----------------------------
 def get_openai_key() -> str:
+    """Read API key from session, Streamlit secrets, or environment variable."""
     if st.session_state.get("openai_key"):
         return st.session_state["openai_key"]
 
@@ -333,7 +325,7 @@ def valid_transition(previous_step: str, current_step: str) -> bool:
         prev_var, prev_solutions = solve_equation_step(previous_step)
         curr_var, curr_solutions = solve_equation_step(current_step)
 
-        # If symbolic validation is not possible, do not mark wrong automatically.
+        # If symbolic validation is not possible, do not automatically mark it wrong.
         if prev_var is None or curr_var is None:
             return True
         if not prev_solutions or not curr_solutions:
@@ -466,7 +458,12 @@ def extract_handwritten_solution(image_bytes: bytes, problem: str, subject: str)
         return ""
 
 
-def score_grading_result(final_correct: bool, problem_match: bool, wrong_step: Optional[int], inconsistencies: List[int]) -> Tuple[int, str, str]:
+def score_grading_result(
+    final_correct: bool,
+    problem_match: bool,
+    wrong_step: Optional[int],
+    inconsistencies: List[int],
+) -> Tuple[int, str, str]:
     if final_correct and problem_match and wrong_step is None and not inconsistencies:
         return 10, "none", "All steps appear correct and the final answer matches."
     if final_correct and problem_match and wrong_step is not None:
@@ -550,7 +547,11 @@ def create_pdf_report(title: str, subtitle: str, df: pd.DataFrame, notes: str = 
         story.append(Paragraph(notes, styles["BodyText"]))
         story.append(Spacer(1, 12))
 
-    display_columns = [col for col in ["Student", "Score", "Confidence", "Error Type", "Human Review", "Feedback"] if col in df.columns]
+    display_columns = [
+        col
+        for col in ["Student", "Score", "Confidence", "Error Type", "Human Review", "Feedback"]
+        if col in df.columns
+    ]
     table_data = [display_columns] + df[display_columns].astype(str).values.tolist()
 
     table = Table(table_data, repeatRows=1)
@@ -575,15 +576,32 @@ def create_pdf_report(title: str, subtitle: str, df: pd.DataFrame, notes: str = 
 # -----------------------------
 # UI helpers
 # -----------------------------
-def card_start():
-    st.markdown('<div class="app-card">', unsafe_allow_html=True)
+def html_card(title: str, body: str) -> None:
+    st.markdown(
+        f"""
+<div class="app-card">
+  <h3>{title}</h3>
+  <p>{body}</p>
+</div>
+""",
+        unsafe_allow_html=True,
+    )
 
 
-def card_end():
-    st.markdown('</div>', unsafe_allow_html=True)
+def html_list_card(title: str, items: List[str]) -> None:
+    list_items = "".join([f"<li>{item}</li>" for item in items])
+    st.markdown(
+        f"""
+<div class="app-card">
+  <h3>{title}</h3>
+  <ul>{list_items}</ul>
+</div>
+""",
+        unsafe_allow_html=True,
+    )
 
 
-def render_result(result: Dict):
+def render_result(result: Dict) -> None:
     col1, col2, col3, col4 = st.columns(4)
     col1.metric("Score", f"{result['score']}/10")
     col2.metric("Confidence", f"{result['confidence']:.2f}")
@@ -700,7 +718,7 @@ if page == "Landing":
     st.markdown(
         """
 <div class="hero">
-  <span class="pill" style="background:#DBEAFE;color:#1E3A8A;">Tutor-focused MVP</span>
+  <span class="pill">Tutor-focused MVP</span>
   <h1>Grade handwritten STEM work faster.</h1>
   <p>STEMGrade AI helps tutors upload student solutions, detect the first wrong step, and generate review-ready feedback reports.</p>
 </div>
@@ -708,49 +726,26 @@ if page == "Landing":
         unsafe_allow_html=True,
     )
 
-c1, c2, c3 = st.columns(3)
-
-with c1:
-    st.markdown(
-        """
-<div class="app-card">
-<h3>Step-by-step checking</h3>
-<p>Evaluate the reasoning path, not just the final answer.</p>
-</div>
-        """,
-        unsafe_allow_html=True,
-    )
-
-with c2:
-    st.markdown(
-        """
-<div class="app-card">
-<h3>Human review flag</h3>
-<p>Low-confidence and inconsistent work is routed back to the tutor.</p>
-</div>
-        """,
-        unsafe_allow_html=True,
-    )
-
-with c3:
-    st.markdown(
-        """
-<div class="app-card">
-<h3>Class reports</h3>
-<p>Batch grade submissions and export CSV/PDF reports for review.</p>
-</div>
-        """,
-        unsafe_allow_html=True,
-    )
+    c1, c2, c3 = st.columns(3)
+    with c1:
+        html_card("Step-by-step checking", "Evaluate the reasoning path, not just the final answer.")
+    with c2:
+        html_card("Human review flag", "Low-confidence and inconsistent work is routed back to the tutor.")
+    with c3:
+        html_card("Class reports", "Batch grade submissions and export CSV/PDF reports for review.")
 
     st.markdown("---")
     left, right = st.columns([1, 1])
+
     with left:
         st.markdown("## Tutor Login")
         tutor_name = st.text_input("Tutor or center name", placeholder="Example: Vamshi Tutoring")
         access_code = st.text_input("Access code", type="password", placeholder="Enter demo or pilot access code")
-        st.caption("For this MVP, set TUTOR_ACCESS_CODE in environment variables or Streamlit secrets. Default demo code: demo-tutor")
-        if st.button("Enter Workspace", width="stretch"):
+        st.caption(
+            "For this MVP, set TUTOR_ACCESS_CODE in environment variables or Streamlit secrets. "
+            "Default demo code: demo-tutor"
+        )
+        if st.button("Enter Workspace", use_container_width=True):
             if access_code == DEFAULT_ACCESS_CODE:
                 st.session_state["authenticated"] = True
                 st.session_state["tutor_name"] = tutor_name.strip() or "Tutor"
@@ -776,15 +771,15 @@ elif page == "Dashboard":
     st.markdown(
         """
 <div class="hero">
-  <h1> Tutor grading workspace</h1>
+  <h1>Tutor grading workspace</h1>
   <p>Grade one solution, batch grade a class, and export review-ready reports.</p>
 </div>
 """,
         unsafe_allow_html=True,
     )
 
-    total_batches = len(st.session_state["batch_history"])
     latest_df = st.session_state.get("batch_results")
+    total_batches = len(st.session_state["batch_history"])
     total_submissions = 0 if latest_df is None else len(latest_df)
     avg_score = 0.0 if latest_df is None or latest_df.empty else latest_df["Score"].mean()
     review_count = 0 if latest_df is None or latest_df.empty else int(latest_df["Human Review"].sum())
@@ -798,21 +793,25 @@ elif page == "Dashboard":
     st.markdown("---")
     c1, c2 = st.columns(2)
     with c1:
-        card_start()
-        st.markdown("### Recommended selling flow")
-        st.markdown("1. Grade 20–30 real anonymized submissions")
-        st.markdown("2. Review low-confidence cases manually")
-        st.markdown("3. Export report and ask tutor for feedback")
-        st.markdown("4. Track accuracy and time saved")
-        card_end()
+        html_list_card(
+            "Recommended selling flow",
+            [
+                "Grade 20-30 real anonymized submissions.",
+                "Review low-confidence cases manually.",
+                "Export report and ask tutor for feedback.",
+                "Track accuracy and time saved.",
+            ],
+        )
     with c2:
-        card_start()
-        st.markdown("### Current MVP limits")
-        st.markdown("- Not a replacement for teacher judgment")
-        st.markdown("- Best for algebra-style symbolic work first")
-        st.markdown("- Needs production auth/database before public launch")
-        st.markdown("- Student data should be anonymized during pilots")
-        card_end()
+        html_list_card(
+            "Current MVP limits",
+            [
+                "Not a replacement for teacher judgment.",
+                "Best for algebra-style symbolic work first.",
+                "Needs production auth/database before public launch.",
+                "Student data should be anonymized during pilots.",
+            ],
+        )
 
 
 # -----------------------------
@@ -844,9 +843,13 @@ elif page == "Grade One":
                 with st.spinner("Extracting handwritten steps..."):
                     st.session_state["extracted_solution"] = extract_handwritten_solution(uploaded.read(), problem, subject)
             if st.session_state["extracted_solution"]:
-                solution = st.text_area("Extracted solution - review/edit before grading", st.session_state["extracted_solution"], height=150)
+                solution = st.text_area(
+                    "Extracted solution - review/edit before grading",
+                    st.session_state["extracted_solution"],
+                    height=150,
+                )
 
-    if st.button("Grade Submission", width="stretch"):
+    if st.button("Grade Submission", use_container_width=True):
         if not solution.strip():
             st.warning("Please provide a student solution.")
             st.stop()
@@ -865,12 +868,11 @@ elif page == "Grade One":
 # -----------------------------
 elif page == "Batch Grade":
     st.title("Batch Grade a Class")
-    st.caption("Best for tutor pilots: paste 5–30 anonymized submissions and export a report.")
+    st.caption("Best for tutor pilots: paste 5-30 anonymized submissions and export a report.")
 
     if not get_openai_key():
         st.warning("OpenAI API key is missing. Add it in Settings or Streamlit secrets before grading.")
 
-    sample = SAMPLE_BY_SUBJECT[subject]
     problem = st.text_input("Assignment problem", value="Solve for x: 2*x + 3 = 7")
     correct_answer = st.text_input("Correct answer", value="2")
 
@@ -899,7 +901,7 @@ elif page == "Batch Grade":
     submissions = parse_batch(raw)
     st.info(f"Detected {len(submissions)} submissions.")
 
-    if st.button("Grade Batch", width="stretch"):
+    if st.button("Grade Batch", use_container_width=True):
         if not submissions:
             st.warning("No valid submissions found.")
             st.stop()
@@ -908,9 +910,9 @@ elif page == "Batch Grade":
         progress = st.progress(0)
         status = st.empty()
 
-        for index, (student, solution) in enumerate(submissions, start=1):
+        for index, (student, student_solution) in enumerate(submissions, start=1):
             status.text(f"Grading {student} ({index}/{len(submissions)})...")
-            result = grade_solution(problem, solution, correct_answer, subject)
+            result = grade_solution(problem, student_solution, correct_answer, subject)
             rows.append(
                 {
                     "Student": student,
@@ -951,19 +953,19 @@ elif page == "Batch Grade":
         m3.metric("Need Review", f"{review_count}/{len(df)}")
         m4.metric("Total", len(df))
 
-        st.dataframe(df, width="stretch", hide_index=True)
+        st.dataframe(df, use_container_width=True, hide_index=True)
 
         c1, c2 = st.columns(2)
         with c1:
             fig = px.bar(df, x="Student", y="Score", title="Scores", range_y=[0, 10])
             fig.update_layout(plot_bgcolor="white", paper_bgcolor="white", font_color="#0F172A")
-            st.plotly_chart(fig, width="stretch")
+            st.plotly_chart(fig, use_container_width=True)
         with c2:
             error_counts = df["Error Type"].value_counts().reset_index()
             error_counts.columns = ["Error Type", "Count"]
             fig2 = px.pie(error_counts, values="Count", names="Error Type", title="Error Distribution")
             fig2.update_layout(plot_bgcolor="white", paper_bgcolor="white", font_color="#0F172A")
-            st.plotly_chart(fig2, width="stretch")
+            st.plotly_chart(fig2, use_container_width=True)
 
         st.download_button(
             "Download CSV Report",
@@ -974,7 +976,10 @@ elif page == "Batch Grade":
 
         pdf_bytes = create_pdf_report(
             title="STEMGrade AI Batch Report",
-            subtitle=f"Subject: {subject} | Problem: {problem} | Generated: {datetime.now().strftime('%Y-%m-%d %H:%M')}",
+            subtitle=(
+                f"Subject: {subject} | Problem: {problem} | "
+                f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M')}"
+            ),
             df=df,
             notes="AI-assisted grading report. Tutor review is recommended for all flagged submissions.",
         )
@@ -1001,7 +1006,7 @@ elif page == "Reports":
         st.info("No batch report yet. Grade a batch first.")
     else:
         st.markdown("### Latest Batch Report")
-        st.dataframe(df, width="stretch", hide_index=True)
+        st.dataframe(df, use_container_width=True, hide_index=True)
         st.download_button(
             "Download Latest CSV",
             data=dataframe_to_csv_bytes(df),
@@ -1016,7 +1021,7 @@ elif page == "Reports":
         st.info("No pilot batches recorded in this session.")
     else:
         hdf = pd.DataFrame(history)
-        st.dataframe(hdf, width="stretch", hide_index=True)
+        st.dataframe(hdf, use_container_width=True, hide_index=True)
         st.download_button(
             "Download Pilot History",
             data=dataframe_to_csv_bytes(hdf),
