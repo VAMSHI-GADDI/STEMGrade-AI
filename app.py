@@ -1,7 +1,10 @@
 import os
 import re
 import io
+import hmac
 import base64
+import logging
+import concurrent.futures
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
@@ -9,7 +12,14 @@ from typing import Dict, List, Optional, Tuple
 import streamlit as st
 import pandas as pd
 import plotly.express as px
-from sympy import sympify, simplify, solve
+
+try:
+    from sympy import sympify, simplify, solve
+    from sympy.core.sympify import SympifyError
+    SYMPY_AVAILABLE = True
+except Exception:
+    SYMPY_AVAILABLE = False
+
 from openai import OpenAI
 
 try:
@@ -23,26 +33,21 @@ except Exception:
 
 
 # ============================================================
-# STEMGrade AI - Tutor-Focused SaaS MVP
-# ============================================================
-# What this app does:
-# - Private tutor login with access code
-# - Grade one STEM solution
-# - Batch grade class submissions
-# - Detect final answer correctness, reasoning issues, confidence, and review flags
-# - Export CSV and PDF reports
-# - Displays custom STEMGrade AI logo from assets/logo.png
-#
-# Important production note:
-# This is still an MVP. Before public/commercial launch, move auth,
-# database, billing, student data storage, audit logs, rate limits,
-# and privacy controls to a real backend.
+# STEMGrade AI — Tutor SaaS MVP v6.0
+# ReasonTrace Intelligence Layer:
+# - Step-level symbolic reasoning audit
+# - Tutor correction feedback loop
+# - Anonymous student error fingerprint
+# - Cross-subject error transfer prototype
 # ============================================================
 
+logging.basicConfig(level=logging.WARNING)
+logger = logging.getLogger("stemgrade")
 
-# -----------------------------
-# App configuration
-# -----------------------------
+
+# ─────────────────────────────────────────
+# App config
+# ─────────────────────────────────────────
 st.set_page_config(
     page_title="STEMGrade AI | Tutor Grading Assistant",
     page_icon="📘",
@@ -50,52 +55,27 @@ st.set_page_config(
     initial_sidebar_state="collapsed",
 )
 
-APP_VERSION = "4.2 MVP"
-DEFAULT_ACCESS_CODE = os.getenv("TUTOR_ACCESS_CODE", "demo-tutor")
-STRIPE_PAYMENT_LINK = os.getenv("STRIPE_PAYMENT_LINK", "")
-SUPPORT_EMAIL = os.getenv("SUPPORT_EMAIL", "support@stemgrade.ai")
+APP_VERSION = "6.0"
 LOGO_PATH = Path("assets/logo.png")
+SUPPORT_EMAIL = os.getenv("SUPPORT_EMAIL", "support@stemgrade.ai")
+STRIPE_PAYMENT_LINK = os.getenv("STRIPE_PAYMENT_LINK", "")
 
 
-# -----------------------------
-# Professional SaaS styling
-# -----------------------------
-st.markdown(
-    """
+# ─────────────────────────────────────────
+# Styling
+# ─────────────────────────────────────────
+st.markdown("""
 <style>
     #MainMenu {visibility: hidden;}
     footer {visibility: hidden;}
     header {visibility: hidden;}
 
-    :root {
-        --primary: #2563EB;
-        --primary-dark: #1E40AF;
-        --bg: #F8FAFC;
-        --card: #FFFFFF;
-        --text: #0F172A;
-        --muted: #64748B;
-        --border: #E2E8F0;
-        --success: #16A34A;
-        --warning: #F59E0B;
-        --danger: #DC2626;
-    }
-
-    .stApp {
-        background: var(--bg);
-        color: var(--text);
-    }
+    .stApp { background: #F8FAFC; color: #0F172A; }
 
     .block-container {
         padding-top: 1.4rem;
         padding-bottom: 3rem;
         max-width: 1380px;
-    }
-
-    .brand-row {
-        display: flex;
-        align-items: center;
-        gap: 0.85rem;
-        margin-bottom: 0.2rem;
     }
 
     .brand-fallback {
@@ -106,81 +86,89 @@ st.markdown(
     }
 
     .hero {
-        background: linear-gradient(135deg, #1E3A8A 0%, #2563EB 55%, #38BDF8 100%);
-        border-radius: 24px;
-        padding: 3rem 2.2rem;
+        background: #1E3A8A;
+        border-radius: 20px;
+        padding: 2.5rem 2rem;
         color: #FFFFFF;
         margin-bottom: 1.5rem;
-        box-shadow: 0 18px 40px rgba(37, 99, 235, 0.20);
     }
 
     .hero h1 {
         color: #FFFFFF !important;
-        font-size: 3rem;
+        font-size: 2.4rem;
         font-weight: 900;
-        margin-bottom: 0.5rem;
-        line-height: 1.1;
+        margin-bottom: 0.4rem;
     }
 
     .hero p {
-        color: #E0F2FE !important;
-        font-size: 1.2rem;
-        max-width: 850px;
+        color: #BFDBFE !important;
+        font-size: 1.1rem;
+        max-width: 860px;
+        margin: 0;
     }
 
     .app-card {
         background: #FFFFFF;
         border: 1px solid #E2E8F0;
-        border-radius: 18px;
-        padding: 1.3rem 1.4rem;
-        box-shadow: 0 8px 24px rgba(15, 23, 42, 0.06);
+        border-radius: 16px;
+        padding: 1.2rem 1.3rem;
         margin-bottom: 1rem;
-        min-height: 120px;
+        min-height: 110px;
     }
 
     .app-card h3 {
         color: #0F172A !important;
-        font-size: 1.25rem;
+        font-size: 1.1rem;
         font-weight: 800;
-        margin-top: 0;
-        margin-bottom: 0.5rem;
+        margin: 0 0 0.4rem;
     }
 
     .app-card p, .app-card li {
         color: #475569 !important;
-        font-size: 0.98rem;
-        line-height: 1.55;
+        font-size: 0.95rem;
+        line-height: 1.5;
     }
 
     .pill {
         display: inline-block;
-        padding: 0.35rem 0.7rem;
+        padding: 0.3rem 0.65rem;
         border-radius: 999px;
         background: #DBEAFE;
         color: #1E40AF;
         font-weight: 800;
-        font-size: 0.82rem;
-        margin-bottom: 0.8rem;
+        font-size: 0.8rem;
+        margin-bottom: 0.7rem;
     }
 
-    .pilot-note {
-        background: #EFF6FF;
-        border: 1px solid #BFDBFE;
-        color: #1E3A8A;
-        padding: 0.8rem 1rem;
+    .stat-card {
+        background: #F1F5F9;
         border-radius: 12px;
-        font-weight: 600;
-        margin-bottom: 1rem;
+        padding: 1rem;
+        text-align: center;
+    }
+
+    .stat-number {
+        font-size: 2rem;
+        font-weight: 900;
+        color: #1E40AF;
+        line-height: 1;
+    }
+
+    .stat-label {
+        font-size: 0.8rem;
+        color: #64748B;
+        margin-top: 0.2rem;
     }
 
     .step-box {
         background: #F8FAFC;
         border: 1px solid #E2E8F0;
-        border-left: 5px solid #2563EB;
-        border-radius: 12px;
-        padding: 0.65rem 0.8rem;
-        margin: 0.35rem 0;
+        border-left: 4px solid #2563EB;
+        border-radius: 0;
+        padding: 0.55rem 0.75rem;
+        margin: 0.25rem 0;
         font-family: monospace;
+        font-size: 0.85rem;
         color: #0F172A;
     }
 
@@ -194,78 +182,113 @@ st.markdown(
         background: #FEF2F2;
     }
 
+    .step-warn {
+        border-left-color: #F59E0B;
+        background: #FFFBEB;
+    }
+
+    .pilot-note {
+        background: #EFF6FF;
+        border: 1px solid #BFDBFE;
+        color: #1E3A8A;
+        padding: 0.75rem 1rem;
+        border-radius: 10px;
+        font-weight: 600;
+        margin-bottom: 1rem;
+        font-size: 0.9rem;
+    }
+
+    .risk-note {
+        background: #FFF7ED;
+        border: 1px solid #FED7AA;
+        color: #9A3412;
+        padding: 0.75rem 1rem;
+        border-radius: 10px;
+        font-weight: 600;
+        margin-bottom: 1rem;
+        font-size: 0.9rem;
+    }
+
     .stButton > button,
     .stDownloadButton > button {
-        border-radius: 10px !important;
+        border-radius: 9px !important;
         border: 1px solid #1D4ED8 !important;
         background: #2563EB !important;
         color: #FFFFFF !important;
         font-weight: 800 !important;
-        min-height: 2.6rem;
+        min-height: 2.5rem;
     }
 
     .stButton > button:hover,
     .stDownloadButton > button:hover {
         background: #1D4ED8 !important;
-        border-color: #1E40AF !important;
     }
 
     .stTextInput input,
     .stTextArea textarea,
     [data-baseweb="select"] div {
-        border-radius: 10px !important;
+        border-radius: 9px !important;
     }
 
     h1, h2, h3 {
         color: #0F172A !important;
     }
 </style>
-""",
-    unsafe_allow_html=True,
-)
+""", unsafe_allow_html=True)
 
 
-# -----------------------------
+# ─────────────────────────────────────────
 # Session state
-# -----------------------------
+# ─────────────────────────────────────────
 DEFAULTS = {
     "authenticated": False,
     "tutor_name": "",
-    "openai_key": "",
     "current_result": None,
     "batch_results": None,
     "batch_history": [],
     "extracted_solution": "",
     "usage_count": 0,
+    "total_graded": 0,
+
+    # ReasonTrace prototype memory
+    "reasontrace_events": [],
+    "tutor_feedback": [],
 }
 
-for key, value in DEFAULTS.items():
-    if key not in st.session_state:
-        st.session_state[key] = value
+for k, v in DEFAULTS.items():
+    if k not in st.session_state:
+        st.session_state[k] = v
 
 
-# -----------------------------
-# Config helpers
-# -----------------------------
+# ─────────────────────────────────────────
+# Security helpers
+# ─────────────────────────────────────────
+def get_access_code() -> str:
+    """Read access code from Streamlit secrets or environment variable."""
+    try:
+        return st.secrets.get("TUTOR_ACCESS_CODE", "demo-tutor")
+    except Exception:
+        return os.getenv("TUTOR_ACCESS_CODE", "demo-tutor")
+
+
+def verify_access_code(provided: str) -> bool:
+    """Constant-time comparison to reduce timing attack risk."""
+    expected = get_access_code()
+    return hmac.compare_digest(
+        provided.strip().encode("utf-8"),
+        expected.encode("utf-8")
+    )
+
+
 def get_openai_key() -> str:
-    """Read API key from session, Streamlit secrets, or environment variable."""
-    if st.session_state.get("openai_key"):
-        return st.session_state["openai_key"]
-
+    """Read OpenAI key from Streamlit secrets or environment variable only."""
     try:
         key = st.secrets.get("OPENAI_API_KEY", "")
         if key:
-            st.session_state["openai_key"] = key
             return key
     except Exception:
         pass
-
-    key = os.getenv("OPENAI_API_KEY", "")
-    if key:
-        st.session_state["openai_key"] = key
-        return key
-
-    return ""
+    return os.getenv("OPENAI_API_KEY", "")
 
 
 def get_client() -> Optional[OpenAI]:
@@ -275,22 +298,21 @@ def get_client() -> Optional[OpenAI]:
     return OpenAI(api_key=key)
 
 
-# -----------------------------
-# Math and grading helpers
-# -----------------------------
+# ─────────────────────────────────────────
+# Math helpers
+# ─────────────────────────────────────────
 def normalize_math(text: str) -> str:
-    text = text.strip()
-    text = text.replace("^", "**")
-    text = re.sub(r"(\d)([a-zA-Z])", r"\1*\2", text)
-    text = re.sub(r"([a-zA-Z])(\d)", r"\1*\2", text)
+    text = text.strip().replace("^", "**")
+    text = re.sub(r"(\d)([a-df-wyzA-Z])", r"\1*\2", text)
+    text = re.sub(r"([a-zA-Z])\(", r"\1*(", text)
     return text
 
 
 def split_steps(solution: str) -> List[str]:
     if not solution:
         return []
-    raw_steps = re.split(r";|\n", solution)
-    return [normalize_math(step) for step in raw_steps if step.strip()]
+    raw = re.split(r";", solution)
+    return [normalize_math(s) for s in raw if s.strip()]
 
 
 def final_answer(solution: str) -> Optional[str]:
@@ -306,24 +328,30 @@ def final_answer(solution: str) -> Optional[str]:
 def equivalent_answer(predicted: Optional[str], correct: str) -> bool:
     if predicted is None:
         return False
+    if not SYMPY_AVAILABLE:
+        return str(predicted).strip().lower() == str(correct).strip().lower()
     try:
         return simplify(sympify(str(predicted)) - sympify(str(correct))) == 0
-    except Exception:
+    except (SympifyError, TypeError, AttributeError, ValueError):
         return str(predicted).strip().lower() == str(correct).strip().lower()
 
 
 def equation_expression(step: str):
+    if not SYMPY_AVAILABLE:
+        return None
     try:
         step = normalize_math(step)
         if "=" not in step:
             return None
         left, right = step.split("=", 1)
         return simplify(sympify(left) - sympify(right))
-    except Exception:
+    except (SympifyError, TypeError, AttributeError, ValueError, RecursionError):
         return None
 
 
 def solve_equation_step(step: str):
+    if not SYMPY_AVAILABLE:
+        return None, []
     try:
         expr = equation_expression(step)
         if expr is None:
@@ -333,33 +361,30 @@ def solve_equation_step(step: str):
             return None, []
         variable = symbols[0]
         return variable, [simplify(x) for x in solve(expr, variable)]
-    except Exception:
+    except (SympifyError, TypeError, AttributeError, ValueError, RecursionError):
         return None, []
 
 
-def valid_transition(previous_step: str, current_step: str) -> bool:
+def valid_transition(prev: str, curr: str) -> bool:
     try:
-        prev_var, prev_solutions = solve_equation_step(previous_step)
-        curr_var, curr_solutions = solve_equation_step(current_step)
+        prev_var, prev_sols = solve_equation_step(prev)
+        curr_var, curr_sols = solve_equation_step(curr)
 
         if prev_var is None or curr_var is None:
             return True
-        if not prev_solutions or not curr_solutions:
+        if not prev_sols or not curr_sols:
             return True
         if prev_var != curr_var:
             return False
 
-        prev_set = {str(simplify(x)) for x in prev_solutions}
-        curr_set = {str(simplify(x)) for x in curr_solutions}
-        return prev_set == curr_set
-    except Exception:
+        return {str(simplify(x)) for x in prev_sols} == {str(simplify(x)) for x in curr_sols}
+    except (SympifyError, TypeError, AttributeError, ValueError, RecursionError):
         return True
 
 
 def first_wrong_step(steps: List[str]) -> Optional[int]:
     if len(steps) <= 1:
         return None
-
     for i in range(1, len(steps)):
         if not valid_transition(steps[i - 1], steps[i]):
             return i + 1
@@ -370,20 +395,19 @@ def problem_matches_student_solution(student_steps: List[str], expected_steps: L
     if not student_steps or not expected_steps:
         return False
     try:
-        student_expr = equation_expression(student_steps[0])
-        expected_expr = equation_expression(expected_steps[0])
-        if student_expr is None or expected_expr is None:
+        se = equation_expression(student_steps[0])
+        ee = equation_expression(expected_steps[0])
+        if se is None or ee is None:
             return False
-        return simplify(student_expr - expected_expr) == 0
-    except Exception:
+        return simplify(se - ee) == 0
+    except (SympifyError, TypeError, AttributeError, ValueError, RecursionError):
         return False
 
 
 def inconsistent_steps(steps: List[str], answer: Optional[str]) -> List[int]:
     issues = []
-    if not steps or answer is None:
+    if not steps or answer is None or not SYMPY_AVAILABLE:
         return issues
-
     try:
         variable, _ = solve_equation_step(steps[0])
         if variable is None:
@@ -395,11 +419,51 @@ def inconsistent_steps(steps: List[str], answer: Optional[str]) -> List[int]:
                 continue
             if simplify(expr.subs(variable, answer_value)) != 0:
                 issues.append(idx)
-    except Exception:
+    except (SympifyError, TypeError, AttributeError, ValueError, RecursionError):
         pass
     return issues
 
 
+# ─────────────────────────────────────────
+# Scoring
+# ─────────────────────────────────────────
+def score_grading_result(
+    final_correct: bool,
+    problem_match: bool,
+    wrong_step: Optional[int],
+    inconsistencies: List[int],
+) -> Tuple[int, str, str]:
+    if final_correct and problem_match and wrong_step is None and not inconsistencies:
+        return 10, "none", "All steps appear correct and the final answer matches."
+    if final_correct and problem_match and wrong_step is not None:
+        return 7, "reasoning_path_error", "Final answer is correct, but a reasoning step appears invalid."
+    if final_correct and not problem_match:
+        return 5, "problem_mismatch", "Final answer matches, but the solution may not match the assigned problem."
+    if not final_correct and problem_match and wrong_step is None:
+        return 6, "final_answer_error", "Reasoning appears mostly valid, but the final answer is incorrect."
+    if not final_correct and wrong_step == 2:
+        return 4, "early_reasoning_error", "A mistake appears early in the solution."
+    if not final_correct and wrong_step is not None:
+        return 5, "reasoning_error", "The solution contains a reasoning error."
+    return 3, "needs_human_review", "The solution could not be graded reliably — tutor review recommended."
+
+
+def confidence_score(
+    final_correct: bool,
+    problem_match: bool,
+    wrong_step: Optional[int],
+    inconsistencies: List[int],
+) -> float:
+    score = 0.35 * int(final_correct)
+    score += 0.30 * int(problem_match)
+    score += 0.20 * int(wrong_step is None)
+    score += 0.15 * int(not inconsistencies)
+    return round(score, 2)
+
+
+# ─────────────────────────────────────────
+# OpenAI calls
+# ─────────────────────────────────────────
 SUBJECT_PROMPTS = {
     "Algebra": "Solve step by step. Return ONLY semicolon-separated steps. Use explicit multiplication like 3*x.",
     "Quadratics": "Solve the quadratic step by step. Return ONLY semicolon-separated steps.",
@@ -410,12 +474,11 @@ SUBJECT_PROMPTS = {
 }
 
 
+@st.cache_data(ttl=3600, show_spinner=False)
 def generate_expected_steps(problem: str, subject: str) -> List[str]:
     client = get_client()
     if client is None:
-        st.error("OpenAI API key is missing. Add it in Streamlit secrets before grading.")
         return []
-
     instruction = SUBJECT_PROMPTS.get(subject, SUBJECT_PROMPTS["Algebra"])
     try:
         response = client.chat.completions.create(
@@ -425,22 +488,33 @@ def generate_expected_steps(problem: str, subject: str) -> List[str]:
                     "role": "system",
                     "content": "You are a precise STEM solution engine. Return only clean semicolon-separated steps.",
                 },
-                {"role": "user", "content": f"{instruction}\nProblem: {problem}"},
+                {
+                    "role": "user",
+                    "content": f"{instruction}\nProblem: {problem}",
+                },
             ],
             temperature=0,
             timeout=30,
         )
         return split_steps(response.choices[0].message.content.strip())
     except Exception as exc:
-        st.error(f"Could not generate expected steps: {exc}")
+        logger.error("generate_expected_steps failed: %s", exc)
         return []
 
 
-def extract_handwritten_solution(image_bytes: bytes, problem: str, subject: str) -> str:
+def extract_handwritten_solution(
+    image_bytes: bytes,
+    problem: str,
+    subject: str,
+    mime_type: str = "image/jpeg",
+) -> str:
     client = get_client()
     if client is None:
-        st.error("OpenAI API key is missing. Add it in Streamlit secrets before grading.")
+        st.error("OpenAI API key missing.")
         return ""
+
+    if mime_type not in ("image/jpeg", "image/png", "image/webp"):
+        mime_type = "image/jpeg"
 
     try:
         encoded = base64.b64encode(image_bytes).decode("utf-8")
@@ -453,14 +527,14 @@ def extract_handwritten_solution(image_bytes: bytes, problem: str, subject: str)
                         {
                             "type": "text",
                             "text": (
-                                f"Extract the handwritten {subject} solution for this problem: {problem}. "
+                                f"Extract the handwritten {subject} solution for: {problem}. "
                                 "Return only the student's mathematical steps separated by semicolons. "
-                                "Use explicit multiplication like 3*x. Do not add explanations."
+                                "Use explicit multiplication like 3*x. No explanations."
                             ),
                         },
                         {
                             "type": "image_url",
-                            "image_url": {"url": f"data:image/jpeg;base64,{encoded}"},
+                            "image_url": {"url": f"data:{mime_type};base64,{encoded}"},
                         },
                     ],
                 }
@@ -470,49 +544,37 @@ def extract_handwritten_solution(image_bytes: bytes, problem: str, subject: str)
         )
         return response.choices[0].message.content.strip()
     except Exception as exc:
+        logger.error("extract_handwritten_solution failed: %s", exc)
         st.error(f"Handwriting extraction failed: {exc}")
         return ""
 
 
-def score_grading_result(
-    final_correct: bool,
-    problem_match: bool,
-    wrong_step: Optional[int],
-    inconsistencies: List[int],
-) -> Tuple[int, str, str]:
-    if final_correct and problem_match and wrong_step is None and not inconsistencies:
-        return 10, "none", "All steps appear correct and the final answer matches."
-    if final_correct and problem_match and wrong_step is not None:
-        return 7, "reasoning_path_error", "Final answer is correct, but one reasoning step appears invalid."
-    if final_correct and not problem_match:
-        return 5, "problem_mismatch", "Final answer matches, but the solution may not match the assigned problem."
-    if not final_correct and problem_match and wrong_step is None:
-        return 6, "final_answer_error", "Reasoning appears mostly valid, but the final answer is incorrect."
-    if not final_correct and wrong_step == 2:
-        return 4, "early_reasoning_error", "A mistake appears early in the solution."
-    if not final_correct and wrong_step is not None:
-        return 5, "reasoning_error", "The solution contains a reasoning error."
-    return 3, "needs_human_review", "The solution could not be graded reliably and needs tutor review."
-
-
-def confidence_score(final_correct: bool, problem_match: bool, wrong_step: Optional[int], inconsistencies: List[int]) -> float:
-    score = 0.35 * int(final_correct)
-    score += 0.30 * int(problem_match)
-    score += 0.20 * int(wrong_step is None)
-    score += 0.15 * int(not inconsistencies)
-    return round(score, 2)
-
-
+# ─────────────────────────────────────────
+# Core grading function
+# ─────────────────────────────────────────
 def grade_solution(problem: str, solution: str, correct_answer: str, subject: str) -> Dict:
     expected = generate_expected_steps(problem, subject)
     steps = split_steps(solution)
     answer = final_answer(solution)
+
     final_correct = equivalent_answer(answer, correct_answer)
     problem_match = problem_matches_student_solution(steps, expected) if steps and expected else False
     wrong_step = first_wrong_step(steps)
     inconsistencies = inconsistent_steps(steps, answer)
-    score, error_type, feedback = score_grading_result(final_correct, problem_match, wrong_step, inconsistencies)
-    confidence = confidence_score(final_correct, problem_match, wrong_step, inconsistencies)
+
+    score, error_type, feedback = score_grading_result(
+        final_correct,
+        problem_match,
+        wrong_step,
+        inconsistencies,
+    )
+
+    confidence = confidence_score(
+        final_correct,
+        problem_match,
+        wrong_step,
+        inconsistencies,
+    )
 
     needs_review = (
         score < 10
@@ -539,9 +601,264 @@ def grade_solution(problem: str, solution: str, correct_answer: str, subject: st
     }
 
 
-# -----------------------------
+def _grade_one_worker(args: Tuple) -> Tuple[str, Dict]:
+    student, solution, problem, correct_answer, subject = args
+    result = grade_solution(problem, solution, correct_answer, subject)
+    return student, result
+
+
+# ─────────────────────────────────────────
+# ReasonTrace Intelligence helpers
+# ─────────────────────────────────────────
+def build_reasontrace_events(
+    student_id: str,
+    subject: str,
+    problem: str,
+    result: Dict,
+) -> List[Dict]:
+    events = []
+    steps = result.get("student_steps", [])
+    first_bad = result.get("first_wrong_step")
+    error_type = result.get("error_type", "unknown")
+    confidence = result.get("confidence", 0.0)
+
+    for idx, step in enumerate(steps, start=1):
+        if first_bad is None:
+            status = "valid"
+        elif idx < first_bad:
+            status = "valid_before_error"
+        elif idx == first_bad:
+            status = "first_reasoning_break"
+        else:
+            status = "compounded_after_error"
+
+        events.append({
+            "Timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "Student ID": student_id,
+            "Subject": subject,
+            "Problem": problem,
+            "Step Number": idx,
+            "Step Text": step,
+            "Step Status": status,
+            "Error Type": error_type,
+            "Confidence": confidence,
+            "Score": result.get("score", 0),
+            "Needs Review": result.get("needs_review", True),
+        })
+
+    return events
+
+
+def verify_reasoning_trace(steps: List[str]) -> pd.DataFrame:
+    rows = []
+
+    if not steps:
+        return pd.DataFrame(rows)
+
+    rows.append({
+        "Step": 1,
+        "Expression": steps[0],
+        "Transition Status": "Start",
+        "Valid": True,
+        "ReasonTrace Message": "Initial step detected.",
+    })
+
+    for i in range(1, len(steps)):
+        is_valid = valid_transition(steps[i - 1], steps[i])
+        rows.append({
+            "Step": i + 1,
+            "Expression": steps[i],
+            "Transition Status": "Valid Transition" if is_valid else "Invalid Transition",
+            "Valid": is_valid,
+            "ReasonTrace Message": (
+                "This step appears symbolically consistent with the previous step."
+                if is_valid
+                else "This step may not be mathematically derivable from the previous step."
+            ),
+        })
+
+    return pd.DataFrame(rows)
+
+
+def summarize_student_fingerprint(events_df: pd.DataFrame, student_id: str) -> Dict:
+    sdf = events_df[events_df["Student ID"] == student_id]
+
+    if sdf.empty:
+        return {
+            "dominant_error": "No data",
+            "subjects_seen": [],
+            "review_rate": 0.0,
+            "risk_level": "Unknown",
+            "recommendation": "No history available yet.",
+        }
+
+    error_counts = sdf["Error Type"].value_counts()
+    dominant_error = error_counts.index[0] if not error_counts.empty else "unknown"
+    subjects_seen = sorted(sdf["Subject"].unique().tolist())
+    review_rate = round(float(sdf["Needs Review"].mean()), 2)
+
+    if review_rate >= 0.70:
+        risk_level = "High"
+    elif review_rate >= 0.35:
+        risk_level = "Medium"
+    else:
+        risk_level = "Low"
+
+    recommendation_map = {
+        "early_reasoning_error": "Review foundational equation transformation and setup.",
+        "reasoning_error": "Assign targeted practice on valid step-to-step transitions.",
+        "reasoning_path_error": "Review solution path consistency even when final answers are correct.",
+        "problem_mismatch": "Check whether the student is solving the assigned problem correctly.",
+        "final_answer_error": "Review final simplification and answer formatting.",
+        "needs_human_review": "Tutor should manually inspect this student's work pattern.",
+        "none": "Continue normal practice and monitor future submissions.",
+    }
+
+    return {
+        "dominant_error": dominant_error,
+        "subjects_seen": subjects_seen,
+        "review_rate": review_rate,
+        "risk_level": risk_level,
+        "recommendation": recommendation_map.get(
+            dominant_error,
+            "Review repeated reasoning pattern and assign targeted practice."
+        ),
+    }
+
+
+def detect_cross_subject_transfer(events_df: pd.DataFrame) -> List[str]:
+    insights = []
+
+    if events_df.empty:
+        return ["No ReasonTrace data available yet. Grade submissions first."]
+
+    for student_id in sorted(events_df["Student ID"].unique()):
+        sdf = events_df[events_df["Student ID"] == student_id]
+        subjects = set(sdf["Subject"].unique().tolist())
+        errors = set(sdf["Error Type"].unique().tolist())
+
+        if len(subjects) < 2:
+            continue
+
+        if "Algebra" in subjects and "Physics" in subjects:
+            insights.append(
+                f"{student_id}: Possible transfer detected from Algebra reasoning errors into Physics formula manipulation. "
+                "This may indicate the student needs equation rearrangement practice, not only Physics review."
+            )
+
+        if "Algebra" in subjects and "Calculus" in subjects:
+            insights.append(
+                f"{student_id}: Algebra simplification errors may be affecting Calculus performance. "
+                "Recommended intervention: review algebraic simplification before calculus practice."
+            )
+
+        if "reasoning_error" in errors or "early_reasoning_error" in errors:
+            insights.append(
+                f"{student_id}: Repeated reasoning-transition issues detected across multiple subjects. "
+                "Recommended intervention: tutor-led review of step-to-step justification."
+            )
+
+        if "problem_mismatch" in errors and len(subjects) >= 2:
+            insights.append(
+                f"{student_id}: Repeated problem-mismatch flags across subjects may indicate that the student is applying memorized procedures "
+                "without fully matching the assigned problem."
+            )
+
+    if not insights:
+        insights.append("No cross-subject transfer pattern detected yet. More anonymized submissions are needed.")
+
+    return insights
+
+
+def reasontrace_events_dataframe() -> pd.DataFrame:
+    events = st.session_state.get("reasontrace_events", [])
+    if not events:
+        return pd.DataFrame()
+    return pd.DataFrame(events)
+
+
+def tutor_feedback_dataframe() -> pd.DataFrame:
+    feedback = st.session_state.get("tutor_feedback", [])
+    if not feedback:
+        return pd.DataFrame()
+    return pd.DataFrame(feedback)
+
+
+def seed_reasontrace_demo_data() -> None:
+    demo_events = [
+        {
+            "Timestamp": "2026-05-09 10:00:00",
+            "Student ID": "S-101",
+            "Subject": "Algebra",
+            "Problem": "Solve: 2*x + 3 = 7",
+            "Step Number": 2,
+            "Step Text": "2*x = 10",
+            "Step Status": "first_reasoning_break",
+            "Error Type": "early_reasoning_error",
+            "Confidence": 0.55,
+            "Score": 4,
+            "Needs Review": True,
+        },
+        {
+            "Timestamp": "2026-05-09 10:04:00",
+            "Student ID": "S-101",
+            "Subject": "Physics",
+            "Problem": "Rearrange F = m*a for a",
+            "Step Number": 2,
+            "Step Text": "a = F + m",
+            "Step Status": "first_reasoning_break",
+            "Error Type": "reasoning_error",
+            "Confidence": 0.52,
+            "Score": 5,
+            "Needs Review": True,
+        },
+        {
+            "Timestamp": "2026-05-09 10:07:00",
+            "Student ID": "S-101",
+            "Subject": "Calculus",
+            "Problem": "Differentiate x**2 + 3*x",
+            "Step Number": 2,
+            "Step Text": "2*x + 3",
+            "Step Status": "valid",
+            "Error Type": "none",
+            "Confidence": 0.85,
+            "Score": 8,
+            "Needs Review": False,
+        },
+        {
+            "Timestamp": "2026-05-09 10:10:00",
+            "Student ID": "S-102",
+            "Subject": "Algebra",
+            "Problem": "Solve: 3*x - 6 = 9",
+            "Step Number": 2,
+            "Step Text": "3*x = 15",
+            "Step Status": "valid",
+            "Error Type": "none",
+            "Confidence": 1.00,
+            "Score": 10,
+            "Needs Review": False,
+        },
+        {
+            "Timestamp": "2026-05-09 10:14:00",
+            "Student ID": "S-103",
+            "Subject": "Systems of Equations",
+            "Problem": "Solve: x + y = 5 and x - y = 1",
+            "Step Number": 3,
+            "Step Text": "2*x = 4",
+            "Step Status": "first_reasoning_break",
+            "Error Type": "reasoning_error",
+            "Confidence": 0.61,
+            "Score": 5,
+            "Needs Review": True,
+        },
+    ]
+
+    st.session_state["reasontrace_events"].extend(demo_events)
+
+
+# ─────────────────────────────────────────
 # Report helpers
-# -----------------------------
+# ─────────────────────────────────────────
 def dataframe_to_csv_bytes(df: pd.DataFrame) -> bytes:
     return df.to_csv(index=False).encode("utf-8")
 
@@ -553,46 +870,43 @@ def create_pdf_report(title: str, subtitle: str, df: pd.DataFrame, notes: str = 
     buffer = io.BytesIO()
     doc = SimpleDocTemplate(buffer, pagesize=letter)
     styles = getSampleStyleSheet()
-    story = []
 
-    story.append(Paragraph(title, styles["Title"]))
-    story.append(Paragraph(subtitle, styles["Normal"]))
-    story.append(Spacer(1, 12))
+    story = [
+        Paragraph(title, styles["Title"]),
+        Paragraph(subtitle, styles["Normal"]),
+        Spacer(1, 12),
+    ]
 
     if notes:
-        story.append(Paragraph(notes, styles["BodyText"]))
-        story.append(Spacer(1, 12))
+        story += [Paragraph(notes, styles["BodyText"]), Spacer(1, 12)]
 
-    display_columns = [
-        col
-        for col in ["Student", "Score", "Confidence", "Error Type", "Human Review", "Feedback"]
-        if col in df.columns
+    display_cols = [
+        c for c in ["Student", "Score", "Confidence", "Error Type", "Human Review", "Feedback"]
+        if c in df.columns
     ]
-    table_data = [display_columns] + df[display_columns].astype(str).values.tolist()
 
+    table_data = [display_cols] + df[display_cols].astype(str).values.tolist()
     table = Table(table_data, repeatRows=1)
-    table.setStyle(
-        TableStyle(
-            [
-                ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#2563EB")),
-                ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
-                ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
-                ("GRID", (0, 0), (-1, -1), 0.25, colors.HexColor("#CBD5E1")),
-                ("VALIGN", (0, 0), (-1, -1), "TOP"),
-                ("FONTSIZE", (0, 0), (-1, -1), 8),
-            ]
-        )
-    )
+
+    table.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#2563EB")),
+        ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+        ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+        ("GRID", (0, 0), (-1, -1), 0.25, colors.HexColor("#CBD5E1")),
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ("FONTSIZE", (0, 0), (-1, -1), 8),
+    ]))
+
     story.append(table)
     doc.build(story)
     buffer.seek(0)
     return buffer.getvalue()
 
 
-# -----------------------------
+# ─────────────────────────────────────────
 # UI helpers
-# -----------------------------
-def show_logo(width: int = 320) -> None:
+# ─────────────────────────────────────────
+def show_logo(width: int = 280) -> None:
     if LOGO_PATH.exists():
         st.image(str(LOGO_PATH), width=width)
     else:
@@ -601,36 +915,25 @@ def show_logo(width: int = 320) -> None:
 
 def html_card(title: str, body: str) -> None:
     st.markdown(
-        f"""
-<div class="app-card">
-  <h3>{title}</h3>
-  <p>{body}</p>
-</div>
-""",
+        f'<div class="app-card"><h3>{title}</h3><p>{body}</p></div>',
         unsafe_allow_html=True,
     )
 
 
 def html_list_card(title: str, items: List[str]) -> None:
-    list_items = "".join([f"<li>{item}</li>" for item in items])
+    lis = "".join(f"<li>{i}</li>" for i in items)
     st.markdown(
-        f"""
-<div class="app-card">
-  <h3>{title}</h3>
-  <ul>{list_items}</ul>
-</div>
-""",
+        f'<div class="app-card"><h3>{title}</h3><ul>{lis}</ul></div>',
         unsafe_allow_html=True,
     )
 
 
 def render_result(result: Dict) -> None:
-    col1, col2, col3, col4 = st.columns(4)
-    col1.metric("Score", f"{result['score']}/10")
-    col2.metric("Confidence", f"{result['confidence']:.2f}")
-    col3.metric("Tutor Review", "Yes" if result["needs_review"] else "No")
-    col4.metric("Error Type", result["error_type"].replace("_", " ").title())
-
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("Score", f"{result['score']}/10")
+    c2.metric("Confidence", f"{result['confidence']:.2f}")
+    c3.metric("Tutor Review", "Yes ⚠️" if result["needs_review"] else "No ✓")
+    c4.metric("Error Type", result["error_type"].replace("_", " ").title())
     st.progress(result["score"] / 10)
 
     if result["score"] >= 8 and not result["needs_review"]:
@@ -640,30 +943,39 @@ def render_result(result: Dict) -> None:
     else:
         st.error(result["feedback"])
 
-    st.markdown("### Step Review")
+    st.markdown("### Step-by-step review")
     left, right = st.columns(2)
 
     with left:
-        st.markdown("**Expected Steps**")
+        st.markdown("**Expected steps**")
         if result["expected_steps"]:
-            for idx, step in enumerate(result["expected_steps"], start=1):
-                st.markdown(f'<div class="step-box">{idx}. {step}</div>', unsafe_allow_html=True)
+            for idx, step in enumerate(result["expected_steps"], 1):
+                st.markdown(
+                    f'<div class="step-box">{idx}. {step}</div>',
+                    unsafe_allow_html=True,
+                )
         else:
             st.info("Expected steps unavailable.")
 
     with right:
-        st.markdown("**Student Steps**")
+        st.markdown("**Student steps**")
         if result["student_steps"]:
-            first_wrong = result.get("first_wrong_step")
-            for idx, step in enumerate(result["student_steps"], start=1):
-                bad = first_wrong is not None and idx >= first_wrong
+            fw = result.get("first_wrong_step")
+            for idx, step in enumerate(result["student_steps"], 1):
+                bad = fw is not None and idx >= fw
                 css = "step-box step-bad" if bad else "step-box step-ok"
-                label = "Review" if bad else "OK"
-                st.markdown(f'<div class="{css}"><b>{label}</b> {idx}. {step}</div>', unsafe_allow_html=True)
+                label = "Review ✗" if bad else "OK ✓"
+                st.markdown(
+                    f'<div class="{css}"><b>{label}</b> {idx}. {step}</div>',
+                    unsafe_allow_html=True,
+                )
         else:
             st.info("No student steps detected.")
 
 
+# ─────────────────────────────────────────
+# Sample data
+# ─────────────────────────────────────────
 SUBJECTS = [
     "Algebra",
     "Quadratics",
@@ -690,7 +1002,7 @@ SAMPLE_BY_SUBJECT = {
         "solution": "x + y = 5; x - y = 1; 2*x = 6; x = 3; y = 2",
     },
     "Physics": {
-        "problem": "Find force: mass=5kg, acceleration=10 m/s^2",
+        "problem": "Find force: mass=5kg, acceleration=10",
         "answer": "50",
         "solution": "F = m*a; F = 5*10; F = 50",
     },
@@ -707,235 +1019,333 @@ SAMPLE_BY_SUBJECT = {
 }
 
 
-# -----------------------------
-# Top navigation
-# -----------------------------
-show_logo(width=280)
+# ─────────────────────────────────────────
+# Top nav
+# ─────────────────────────────────────────
+show_logo(width=260)
 st.caption(f"Tutor SaaS MVP · v{APP_VERSION}")
 
 if st.session_state["authenticated"]:
     top_left, top_right = st.columns([3, 1])
+
     with top_left:
-        st.success(f"Signed in as {st.session_state['tutor_name'] or 'Tutor'}")
+        st.success(f"Signed in as **{st.session_state['tutor_name'] or 'Tutor'}**")
+
     with top_right:
         if st.button("Sign out", use_container_width=True):
-            for key, value in DEFAULTS.items():
-                st.session_state[key] = value
+            for k, v in DEFAULTS.items():
+                st.session_state[k] = v
             st.rerun()
 
     page = st.radio(
         "Workspace",
-        ["Dashboard", "Grade One", "Batch Grade", "Reports"],
+        ["Dashboard", "Grade One", "Batch Grade", "Reports", "ReasonTrace Intelligence"],
         horizontal=True,
     )
+
     subject = st.selectbox("Subject", SUBJECTS, index=0)
     st.markdown("---")
 else:
     page = "Landing"
     subject = "Algebra"
-    st.info("Sign in to access the tutor workspace.")
 
 
-# -----------------------------
-# Landing / login page
-# -----------------------------
+# ══════════════════════════════════════════
+# LANDING / LOGIN
+# ══════════════════════════════════════════
 if page == "Landing":
-    st.markdown(
-        """
+    st.markdown("""
 <div class="hero">
   <span class="pill">Tutor-focused MVP</span>
   <h1>Grade handwritten STEM work faster.</h1>
-  <p>STEMGrade AI helps tutors upload student solutions, detect the first wrong step, and generate review-ready feedback reports.</p>
+  <p>Upload student solutions, detect the first wrong step, and export review-ready reports in seconds.</p>
 </div>
-""",
-        unsafe_allow_html=True,
-    )
+""", unsafe_allow_html=True)
 
     st.markdown(
-        """
-<div class="pilot-note">
-Pilot note: Please use anonymized student submissions only. Do not upload student names, IDs, emails, or sensitive personal information.
-</div>
-""",
+        '<div class="pilot-note">Pilot note: Use anonymized submissions only. Do not upload student names, IDs, or personal information.</div>',
         unsafe_allow_html=True,
     )
 
     c1, c2, c3 = st.columns(3)
+
     with c1:
-        html_card("Step-by-step checking", "Evaluate the reasoning path, not just the final answer.")
+        html_card("Step-by-step checking", "Evaluates the reasoning path, not just the final answer.")
+
     with c2:
-        html_card("Human review flag", "Low-confidence and inconsistent work is routed back to the tutor.")
+        html_card("Human review flag", "Low-confidence work is routed back to the tutor automatically.")
+
     with c3:
-        html_card("Class reports", "Batch grade submissions and export CSV/PDF reports for review.")
+        html_card("Class reports", "Batch grade and export CSV/PDF reports for your records.")
 
     st.markdown("---")
-    left, right = st.columns([1, 1])
+    left, right = st.columns(2)
 
     with left:
-        st.markdown("## Tutor Login")
-        tutor_name = st.text_input("Tutor or center name", placeholder="Example: Vamshi Tutoring")
-        access_code = st.text_input("Access code", type="password", placeholder="Enter demo or pilot access code")
-        st.caption("Default demo code: demo-tutor")
+        st.markdown("## Tutor login")
+        tutor_name = st.text_input("Your name or center", placeholder="e.g. Vamshi Tutoring")
+        access_code = st.text_input("Access code", type="password", placeholder="Enter your access code")
+        st.caption("Demo code: `demo-tutor`")
+
         if st.button("Enter Workspace", use_container_width=True):
-            if access_code == DEFAULT_ACCESS_CODE:
+            if not access_code.strip():
+                st.warning("Please enter an access code.")
+            elif verify_access_code(access_code):
                 st.session_state["authenticated"] = True
                 st.session_state["tutor_name"] = tutor_name.strip() or "Tutor"
                 st.rerun()
             else:
-                st.error("Invalid access code.")
+                st.error("Invalid access code. Please try again.")
 
     with right:
-        st.markdown("## Pilot offer")
-        st.write("Use this MVP for tutor pilots before building the full SaaS backend.")
+        st.markdown("## What you get")
         st.markdown("- Upload or paste student solutions")
-        st.markdown("- Review first wrong step and confidence")
-        st.markdown("- Export CSV/PDF grading reports")
-        st.markdown("- Keep human review in the loop")
+        st.markdown("- Review first wrong step and confidence score")
+        st.markdown("- Batch grade an entire class at once")
+        st.markdown("- Export CSV and PDF grading reports")
+        st.markdown("- Human-in-the-loop review flags for low confidence")
+        st.markdown("- ReasonTrace prototype for anonymous reasoning-memory insights")
+
         if STRIPE_PAYMENT_LINK:
-            st.link_button("Start Paid Pilot", STRIPE_PAYMENT_LINK)
+            st.link_button("Start Paid Pilot →", STRIPE_PAYMENT_LINK)
 
 
-# -----------------------------
-# Dashboard
-# -----------------------------
+# ══════════════════════════════════════════
+# DASHBOARD
+# ══════════════════════════════════════════
 elif page == "Dashboard":
-    st.markdown(
-        """
+    st.markdown("""
 <div class="hero">
   <h1>Tutor grading workspace</h1>
-  <p>Grade one solution, batch grade a class, and export review-ready reports.</p>
+  <p>Grade one solution, batch grade a class, export reports, and explore ReasonTrace reasoning intelligence.</p>
 </div>
-""",
-        unsafe_allow_html=True,
-    )
+""", unsafe_allow_html=True)
 
     latest_df = st.session_state.get("batch_results")
-    total_batches = len(st.session_state["batch_history"])
     total_submissions = 0 if latest_df is None else len(latest_df)
     avg_score = 0.0 if latest_df is None or latest_df.empty else latest_df["Score"].mean()
     review_count = 0 if latest_df is None or latest_df.empty else int(latest_df["Human Review"].sum())
+    max_score = 0 if latest_df is None or latest_df.empty else latest_df["Score"].max()
+    total_ever = st.session_state["total_graded"]
+    rt_events = len(st.session_state.get("reasontrace_events", []))
+
+    m1, m2, m3, m4, m5 = st.columns(5)
+    m1.metric("Total graded", total_ever)
+    m2.metric("Latest batch", total_submissions)
+    m3.metric("Avg score", f"{avg_score:.1f}/10" if total_submissions else "—")
+    m4.metric("Need review", review_count if total_submissions else "—")
+    m5.metric("ReasonTrace events", rt_events)
 
     if latest_df is not None and not latest_df.empty:
-        max_score = latest_df["Score"].max()
         top_students = latest_df[latest_df["Score"] == max_score]["Student"].tolist()
-        top_student_display = ", ".join(top_students)
-    else:
-        max_score = 0
-        top_student_display = "—"
-
-    m1, m2, m3, m4 = st.columns(4)
-    m1.metric("Latest Submissions", total_submissions)
-    m2.metric("Top Score", f"{max_score}/10" if total_submissions else "—")
-    m3.metric("Need Review", review_count if total_submissions else "—")
-    m4.metric("Batches", total_batches)
-
-    st.caption(f"Latest Average: {avg_score:.1f}/10" if total_submissions else "Latest Average: —")
-    if total_submissions:
-        st.info(f"Top Students: {top_student_display}")
+        st.info(f"Top score ({max_score}/10): {', '.join(top_students)}")
 
     st.markdown("---")
+
     c1, c2 = st.columns(2)
+
     with c1:
-        html_list_card(
-            "Recommended selling flow",
-            [
-                "Grade 20-30 real anonymized submissions.",
-                "Review low-confidence cases manually.",
-                "Export report and ask tutor for feedback.",
-                "Track accuracy and time saved.",
-            ],
-        )
+        html_list_card("Recommended pilot flow", [
+            "Grade 20–30 real anonymized submissions.",
+            "Manually review low-confidence cases.",
+            "Save tutor corrections in the feedback loop.",
+            "Use ReasonTrace to inspect repeated reasoning patterns.",
+            "Track accuracy and time saved vs manual grading.",
+        ])
+
     with c2:
-        html_list_card(
-            "Current MVP limits",
-            [
-                "Not a replacement for teacher judgment.",
-                "Best for algebra-style symbolic work first.",
-                "Needs production auth/database before public launch.",
-                "Student data should be anonymized during pilots.",
-            ],
-        )
+        html_list_card("Current MVP limits", [
+            "Not a replacement for teacher judgment.",
+            "Best for algebra-style symbolic problems first.",
+            "Physics/Chemistry/Calculus need additional validation.",
+            "Needs production auth/database before public launch.",
+            "All student data should be anonymized during pilots.",
+        ])
 
+    st.markdown("---")
 
-# -----------------------------
-# Grade One
-# -----------------------------
-elif page == "Grade One":
-    st.title("Grade One Student Submission")
-    st.caption("Use this for live tutor demos and one-on-one grading.")
+    html_card(
+        "ReasonTrace direction",
+        "The next technical direction is anonymous reasoning memory: tutor-corrected feedback, student error fingerprints, and possible cross-subject error transfer insights."
+    )
 
     if not get_openai_key():
-        st.warning("OpenAI API key is missing. Add it in Streamlit Cloud secrets before grading.")
+        st.error("⚠️ No OpenAI API key found. Add `OPENAI_API_KEY` to Streamlit secrets before grading.")
+
+
+# ══════════════════════════════════════════
+# GRADE ONE
+# ══════════════════════════════════════════
+elif page == "Grade One":
+    st.title("Grade one submission")
+    st.caption("Use this for one-on-one grading and for building tutor-confirmed validation data.")
+
+    if not get_openai_key():
+        st.error("⚠️ OpenAI API key missing. Add it to Streamlit secrets.")
+        st.stop()
 
     sample = SAMPLE_BY_SUBJECT[subject]
-    col1, col2 = st.columns([1, 1])
+
+    col1, col2 = st.columns(2)
+
     with col1:
         problem = st.text_input("Problem", value=sample["problem"])
         correct_answer = st.text_input("Correct answer", value=sample["answer"])
+
     with col2:
         input_method = st.radio("Input method", ["Paste solution", "Upload handwritten image"], horizontal=True)
 
     solution = ""
+
     if input_method == "Paste solution":
-        solution = st.text_area("Student solution", value=sample["solution"], height=150)
+        solution = st.text_area(
+            "Student solution",
+            value=sample["solution"],
+            height=140,
+            help="Use semicolons between steps, for example: 2*x + 3 = 7; 2*x = 4; x = 2",
+        )
     else:
-        uploaded = st.file_uploader("Upload handwritten solution", type=["jpg", "jpeg", "png"])
+        uploaded = st.file_uploader("Upload handwritten solution", type=["jpg", "jpeg", "png", "webp"])
+
         if uploaded:
-            st.image(uploaded, width=420)
-            if st.button("Extract Handwriting"):
-                with st.spinner("Extracting handwritten steps..."):
-                    st.session_state["extracted_solution"] = extract_handwritten_solution(uploaded.read(), problem, subject)
+            st.image(uploaded, width=400)
+
+            mime_type = uploaded.type if uploaded.type in ("image/jpeg", "image/png", "image/webp") else "image/jpeg"
+
+            if st.button("Extract handwriting"):
+                with st.spinner("Reading handwritten steps..."):
+                    st.session_state["extracted_solution"] = extract_handwritten_solution(
+                        uploaded.read(),
+                        problem,
+                        subject,
+                        mime_type=mime_type,
+                    )
+
             if st.session_state["extracted_solution"]:
                 solution = st.text_area(
-                    "Extracted solution - review/edit before grading",
+                    "Extracted solution — review and edit before grading",
                     st.session_state["extracted_solution"],
-                    height=150,
+                    height=140,
                 )
 
-    if st.button("Grade Submission", use_container_width=True):
+    if st.button("Grade submission", use_container_width=True):
         if not solution.strip():
             st.warning("Please provide a student solution.")
             st.stop()
+
         with st.spinner("Grading reasoning steps..."):
             result = grade_solution(problem, solution, correct_answer, subject)
             st.session_state["current_result"] = result
             st.session_state["usage_count"] += 1
+            st.session_state["total_graded"] += 1
 
     if st.session_state.get("current_result"):
         st.markdown("---")
         render_result(st.session_state["current_result"])
 
+        st.markdown("### Tutor feedback loop")
+        st.caption("This creates the validation dataset needed before future learning, fine-tuning, or RL-style optimization.")
 
-# -----------------------------
-# Batch Grade
-# -----------------------------
+        student_id = st.text_input(
+            "Anonymous student ID",
+            value="S-101",
+            help="Use anonymous IDs only. Do not enter real student names, student numbers, or school IDs.",
+        )
+
+        fb_col1, fb_col2, fb_col3 = st.columns(3)
+
+        with fb_col1:
+            tutor_judgment = st.selectbox(
+                "Was the AI grading correct?",
+                ["Select", "Correct", "Partially Correct", "Wrong"],
+            )
+
+        with fb_col2:
+            corrected_score = st.number_input(
+                "Tutor-corrected score",
+                min_value=0,
+                max_value=10,
+                value=int(st.session_state["current_result"]["score"]),
+            )
+
+        with fb_col3:
+            corrected_error = st.text_input(
+                "Tutor-corrected error type",
+                value=st.session_state["current_result"]["error_type"],
+            )
+
+        tutor_notes = st.text_area(
+            "Tutor notes, optional",
+            placeholder="Example: AI found the final answer but missed the true first wrong step.",
+        )
+
+        if st.button("Save tutor feedback + ReasonTrace memory", use_container_width=True):
+            if tutor_judgment == "Select":
+                st.warning("Please select whether the AI grading was correct.")
+            else:
+                result = st.session_state["current_result"]
+
+                feedback_record = {
+                    "Timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                    "Student ID": student_id,
+                    "Subject": subject,
+                    "Problem": problem,
+                    "AI Score": result["score"],
+                    "Tutor Score": corrected_score,
+                    "AI Error Type": result["error_type"],
+                    "Tutor Error Type": corrected_error,
+                    "AI Confidence": result["confidence"],
+                    "Tutor Judgment": tutor_judgment,
+                    "Tutor Notes": tutor_notes,
+                }
+
+                st.session_state["tutor_feedback"].append(feedback_record)
+
+                events = build_reasontrace_events(
+                    student_id=student_id,
+                    subject=subject,
+                    problem=problem,
+                    result=result,
+                )
+
+                st.session_state["reasontrace_events"].extend(events)
+
+                st.success("Saved tutor feedback and ReasonTrace memory for this anonymous student.")
+
+
+# ══════════════════════════════════════════
+# BATCH GRADE
+# ══════════════════════════════════════════
 elif page == "Batch Grade":
-    st.title("Batch Grade a Class")
-    st.caption("Best for tutor pilots: paste 5-30 anonymized submissions and export a report.")
+    st.title("Batch grade a class")
+    st.caption("Paste 5–30 anonymized submissions. Graded in parallel.")
 
     if not get_openai_key():
-        st.warning("OpenAI API key is missing. Add it in Streamlit Cloud secrets before grading.")
+        st.error("⚠️ OpenAI API key missing. Add it to Streamlit secrets.")
+        st.stop()
 
     problem = st.text_input("Assignment problem", value="Solve for x: 2*x + 3 = 7")
     correct_answer = st.text_input("Correct answer", value="2")
 
     st.markdown("### Student submissions")
-    st.caption("Format: StudentName: step 1; step 2; final answer. Use anonymous IDs for pilots.")
+    st.caption("Format: `StudentID: step1; step2; final answer` — one student per line. Use anonymous IDs.")
+
     raw = st.text_area(
         "Paste submissions",
         value=(
-            "Student A: 2*x + 3 = 7; 2*x = 4; x = 2\n"
-            "Student B: 2*x + 3 = 7; 2*x = 10; x = 5\n"
-            "Student C: 2*x + 3 = 7; 2*x = 4; x = 2\n"
-            "Student D: 2*x + 3 = 7; 2*x = 6; x = 3\n"
-            "Student E: 2*x + 3 = 7; 2*x = 4; x = 2"
+            "S-101: 2*x + 3 = 7; 2*x = 10; x = 5\n"
+            "S-102: 2*x + 3 = 7; 2*x = 4; x = 2\n"
+            "S-103: 2*x + 3 = 7; 2*x = 6; x = 3\n"
+            "S-104: 2*x + 3 = 7; 2*x = 4; x = 2\n"
+            "S-105: 2*x + 3 = 7; 2*x = 4; x = 2"
         ),
-        height=210,
+        height=200,
     )
 
     def parse_batch(text: str) -> List[Tuple[str, str]]:
         parsed = []
         for line in text.splitlines():
+            line = line.strip()
             if ":" in line:
                 name, sol = line.split(":", 1)
                 if name.strip() and sol.strip():
@@ -943,149 +1353,462 @@ elif page == "Batch Grade":
         return parsed
 
     submissions = parse_batch(raw)
-    st.info(f"Detected {len(submissions)} submissions.")
+    st.info(f"Detected **{len(submissions)}** submission{'s' if len(submissions) != 1 else ''}.")
 
-    if st.button("Grade Batch", use_container_width=True):
+    max_workers = min(8, len(submissions)) if submissions else 1
+    st.caption(f"Will grade with up to {max_workers} parallel workers.")
+
+    if st.button("Grade batch", use_container_width=True):
         if not submissions:
-            st.warning("No valid submissions found.")
+            st.warning("No valid submissions found. Check your format.")
             st.stop()
 
+        progress_bar = st.progress(0, text="Starting...")
+        completed = [0]
+
+        args_list = [
+            (student, sol, problem, correct_answer, subject)
+            for student, sol in submissions
+        ]
+
         rows = []
-        progress = st.progress(0)
-        status = st.empty()
 
-        for index, (student, student_solution) in enumerate(submissions, start=1):
-            status.text(f"Grading {student} ({index}/{len(submissions)})...")
-            result = grade_solution(problem, student_solution, correct_answer, subject)
-            rows.append(
-                {
-                    "Student": student,
-                    "Score": result["score"],
-                    "Confidence": result["confidence"],
-                    "Error Type": result["error_type"],
-                    "Human Review": result["needs_review"],
-                    "Final Answer": result["final_answer"],
-                    "Feedback": result["feedback"],
-                }
-            )
-            progress.progress(index / len(submissions))
-
-        df = pd.DataFrame(rows)
-        st.session_state["batch_results"] = df
-        st.session_state["batch_history"].append(
-            {
-                "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M"),
-                "subject": subject,
-                "problem": problem,
-                "count": len(df),
-                "average": float(df["Score"].mean()),
-                "review_count": int(df["Human Review"].sum()),
+        with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
+            future_to_student = {
+                executor.submit(_grade_one_worker, args): args[0]
+                for args in args_list
             }
-        )
-        status.success("Batch grading complete.")
+
+            for future in concurrent.futures.as_completed(future_to_student):
+                try:
+                    student, result = future.result()
+
+                    rows.append({
+                        "Student": student,
+                        "Score": result["score"],
+                        "Confidence": result["confidence"],
+                        "Error Type": result["error_type"],
+                        "Human Review": result["needs_review"],
+                        "Final Answer": result["final_answer"],
+                        "Feedback": result["feedback"],
+                    })
+
+                    events = build_reasontrace_events(
+                        student_id=student,
+                        subject=subject,
+                        problem=problem,
+                        result=result,
+                    )
+                    st.session_state["reasontrace_events"].extend(events)
+
+                except Exception as exc:
+                    student = future_to_student[future]
+                    logger.error("Grading failed for %s: %s", student, exc)
+
+                    rows.append({
+                        "Student": student,
+                        "Score": 0,
+                        "Confidence": 0.0,
+                        "Error Type": "grading_error",
+                        "Human Review": True,
+                        "Final Answer": None,
+                        "Feedback": f"Grading error — tutor review required. ({exc})",
+                    })
+
+                finally:
+                    completed[0] += 1
+                    pct = completed[0] / len(submissions)
+                    progress_bar.progress(pct, text=f"Graded {completed[0]} of {len(submissions)}...")
+
+        progress_bar.progress(1.0, text="Done!")
+
+        rows.sort(key=lambda r: r["Student"])
+        df = pd.DataFrame(rows)
+
+        st.session_state["batch_results"] = df
+        st.session_state["total_graded"] += len(df)
+
+        st.session_state["batch_history"].append({
+            "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M"),
+            "subject": subject,
+            "problem": problem,
+            "count": len(df),
+            "average": round(float(df["Score"].mean()), 2),
+            "review_count": int(df["Human Review"].sum()),
+        })
+
+        st.success(f"Batch complete — {len(df)} students graded.")
 
     df = st.session_state.get("batch_results")
+
     if df is not None and not df.empty:
         st.markdown("---")
+
         avg = df["Score"].mean()
-        max_score = df["Score"].max()
-        top_students = df[df["Score"] == max_score]["Student"].tolist()
-        top_student_display = ", ".join(top_students)
-        review_count = int(df["Human Review"].sum())
+        max_s = df["Score"].max()
+        top = df[df["Score"] == max_s]["Student"].tolist()
+        rev = int(df["Human Review"].sum())
 
         m1, m2, m3, m4 = st.columns(4)
         m1.metric("Average", f"{avg:.1f}/10")
-        m2.metric("Top Score", f"{max_score}/10")
-        m3.metric("Need Review", f"{review_count}/{len(df)}")
-        m4.metric("Total", len(df))
+        m2.metric("Top score", f"{max_s}/10")
+        m3.metric("Need review", f"{rev}/{len(df)}")
+        m4.metric("Total graded", len(df))
 
-        st.info(f"Top Students: {top_student_display}")
+        st.info(f"Top students: {', '.join(top)}")
         st.dataframe(df, use_container_width=True, hide_index=True)
 
-        c1, c2 = st.columns(2)
-        with c1:
-            fig = px.bar(df, x="Student", y="Score", title="Scores", range_y=[0, 10])
-            fig.update_layout(plot_bgcolor="white", paper_bgcolor="white", font_color="#0F172A")
+        col1, col2 = st.columns(2)
+
+        with col1:
+            fig = px.bar(
+                df.sort_values("Score"),
+                x="Student",
+                y="Score",
+                color="Score",
+                color_continuous_scale="Blues",
+                title="Score by student",
+                range_y=[0, 10],
+            )
+            fig.update_layout(
+                plot_bgcolor="white",
+                paper_bgcolor="white",
+                font_color="#0F172A",
+                showlegend=False,
+            )
             st.plotly_chart(fig, use_container_width=True)
-        with c2:
-            error_counts = df["Error Type"].value_counts().reset_index()
-            error_counts.columns = ["Error Type", "Count"]
-            fig2 = px.pie(error_counts, values="Count", names="Error Type", title="Error Distribution")
-            fig2.update_layout(plot_bgcolor="white", paper_bgcolor="white", font_color="#0F172A")
+
+        with col2:
+            err = df["Error Type"].value_counts().reset_index()
+            err.columns = ["Error Type", "Count"]
+            fig2 = px.pie(err, values="Count", names="Error Type", title="Error distribution")
+            fig2.update_layout(
+                plot_bgcolor="white",
+                paper_bgcolor="white",
+                font_color="#0F172A",
+            )
             st.plotly_chart(fig2, use_container_width=True)
 
         st.download_button(
-            "Download CSV Report",
+            "Download CSV report",
             data=dataframe_to_csv_bytes(df),
-            file_name=f"stemgrade_report_{datetime.now().strftime('%Y%m%d_%H%M')}.csv",
+            file_name=f"stemgrade_{datetime.now().strftime('%Y%m%d_%H%M')}.csv",
             mime="text/csv",
         )
 
-        pdf_bytes = create_pdf_report(
-            title="STEMGrade AI Batch Report",
-            subtitle=(
-                f"Subject: {subject} | Problem: {problem} | "
-                f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M')}"
-            ),
-            df=df,
-            notes="AI-assisted grading report. Tutor review is recommended for all flagged submissions.",
-        )
-        if pdf_bytes:
-            st.download_button(
-                "Download PDF Report",
-                data=pdf_bytes,
-                file_name=f"stemgrade_report_{datetime.now().strftime('%Y%m%d_%H%M')}.pdf",
-                mime="application/pdf",
+        if REPORTLAB_AVAILABLE:
+            pdf = create_pdf_report(
+                title="STEMGrade AI Batch Report",
+                subtitle=f"Subject: {subject} | Problem: {problem} | {datetime.now().strftime('%Y-%m-%d %H:%M')}",
+                df=df,
+                notes="AI-assisted grading. Tutor review recommended for all flagged submissions.",
             )
+
+            if pdf:
+                st.download_button(
+                    "Download PDF report",
+                    data=pdf,
+                    file_name=f"stemgrade_{datetime.now().strftime('%Y%m%d_%H%M')}.pdf",
+                    mime="application/pdf",
+                )
         else:
-            st.caption("PDF export requires reportlab. Install it with: pip install reportlab")
+            st.warning("PDF export requires reportlab. Install with: `pip install reportlab`")
 
 
-# -----------------------------
-# Reports
-# -----------------------------
+# ══════════════════════════════════════════
+# REPORTS
+# ══════════════════════════════════════════
 elif page == "Reports":
     st.title("Reports")
-    st.caption("Export results and review pilot history.")
+    st.caption("Export results and review your session history.")
 
     df = st.session_state.get("batch_results")
+
     if df is None or df.empty:
-        st.info("No batch report yet. Grade a batch first.")
+        st.info("No batch report yet. Go to Batch Grade first.")
     else:
-        st.markdown("### Latest Batch Report")
+        st.markdown("### Latest batch report")
         st.dataframe(df, use_container_width=True, hide_index=True)
+
         st.download_button(
-            "Download Latest CSV",
+            "Download latest CSV",
             data=dataframe_to_csv_bytes(df),
-            file_name="latest_stemgrade_report.csv",
+            file_name="stemgrade_latest.csv",
             mime="text/csv",
         )
 
-        pdf_bytes = create_pdf_report(
-            title="STEMGrade AI Latest Batch Report",
-            subtitle=f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M')}",
-            df=df,
-            notes="AI-assisted grading report. Tutor review is recommended for all flagged submissions.",
-        )
-        if pdf_bytes:
-            st.download_button(
-                "Download Latest PDF",
-                data=pdf_bytes,
-                file_name="latest_stemgrade_report.pdf",
-                mime="application/pdf",
+        if REPORTLAB_AVAILABLE:
+            pdf = create_pdf_report(
+                title="STEMGrade AI Latest Report",
+                subtitle=f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M')}",
+                df=df,
+                notes="AI-assisted grading. Tutor review recommended for all flagged submissions.",
             )
 
+            if pdf:
+                st.download_button(
+                    "Download latest PDF",
+                    data=pdf,
+                    file_name="stemgrade_latest.pdf",
+                    mime="application/pdf",
+                )
+        else:
+            st.warning("PDF export requires reportlab. Run: `pip install reportlab`")
+
     st.markdown("---")
-    st.markdown("### Pilot History")
+    st.markdown("### Session history")
+
     history = st.session_state.get("batch_history", [])
+
     if not history:
-        st.info("No pilot batches recorded in this session.")
+        st.info("No batches graded in this session.")
     else:
         hdf = pd.DataFrame(history)
         st.dataframe(hdf, use_container_width=True, hide_index=True)
+
         st.download_button(
-            "Download Pilot History",
+            "Download session history",
             data=dataframe_to_csv_bytes(hdf),
-            file_name="stemgrade_pilot_history.csv",
+            file_name="stemgrade_history.csv",
             mime="text/csv",
         )
+
+
+# ══════════════════════════════════════════
+# REASONTRACE INTELLIGENCE
+# ══════════════════════════════════════════
+elif page == "ReasonTrace Intelligence":
+    st.title("ReasonTrace Intelligence")
+    st.caption(
+        "Prototype layer for reasoning audit, tutor feedback learning, anonymous error fingerprints, "
+        "and cross-subject transfer insights."
+    )
+
+    st.markdown("""
+<div class="pilot-note">
+ReasonTrace is a prototype validation layer. It is not a fully validated prediction system yet.
+It is designed to test whether tutors value longitudinal reasoning patterns, tutor-corrected feedback,
+and cross-subject error transfer insights.
+</div>
+""", unsafe_allow_html=True)
+
+    st.markdown("""
+<div class="risk-note">
+Privacy rule: use anonymous student IDs only. Do not enter real student names, school IDs, email addresses,
+or sensitive student information.
+</div>
+""", unsafe_allow_html=True)
+
+    rt_col1, rt_col2, rt_col3 = st.columns(3)
+
+    with rt_col1:
+        if st.button("Load sample ReasonTrace demo data", use_container_width=True):
+            seed_reasontrace_demo_data()
+            st.success("Loaded sample anonymous ReasonTrace data.")
+
+    with rt_col2:
+        if st.button("Clear ReasonTrace memory", use_container_width=True):
+            st.session_state["reasontrace_events"] = []
+            st.session_state["tutor_feedback"] = []
+            st.success("Cleared ReasonTrace memory for this session.")
+
+    with rt_col3:
+        st.metric("Stored ReasonTrace events", len(st.session_state.get("reasontrace_events", [])))
+
+    tab1, tab2, tab3, tab4 = st.tabs([
+        "1. Step Verifier",
+        "2. Tutor Feedback Dataset",
+        "3. Student Error Fingerprint",
+        "4. Cross-Subject Transfer",
+    ])
+
+    # ─────────────────────────────────────
+    # Tab 1: Symbolic step verifier
+    # ─────────────────────────────────────
+    with tab1:
+        st.subheader("Symbolic Step Verifier")
+        st.write(
+            "This checks whether each step is mathematically consistent with the previous step. "
+            "This is the core reasoning-audit idea behind ReasonTrace."
+        )
+
+        demo_solution = st.text_area(
+            "Enter a step-by-step solution",
+            value="2*x + 3 = 7; 2*x = 10; x = 5",
+            height=120,
+            help="Use semicolons between steps.",
+        )
+
+        if st.button("Run Symbolic ReasonTrace", use_container_width=True):
+            steps = split_steps(demo_solution)
+            trace_df = verify_reasoning_trace(steps)
+
+            if trace_df.empty:
+                st.warning("No steps detected.")
+            else:
+                for _, row in trace_df.iterrows():
+                    css = "step-box step-ok" if row["Valid"] else "step-box step-bad"
+                    st.markdown(
+                        f"""
+                        <div class="{css}">
+                            <b>Step {row['Step']} — {row['Transition Status']}</b><br>
+                            {row['Expression']}<br>
+                            <small>{row['ReasonTrace Message']}</small>
+                        </div>
+                        """,
+                        unsafe_allow_html=True,
+                    )
+
+                invalid = trace_df[trace_df["Valid"] == False]
+
+                if not invalid.empty:
+                    first_bad = int(invalid.iloc[0]["Step"])
+                    st.error(f"First possible reasoning break detected at Step {first_bad}.")
+                else:
+                    st.success("No invalid symbolic transition detected.")
+
+                st.download_button(
+                    "Download ReasonTrace step audit CSV",
+                    data=dataframe_to_csv_bytes(trace_df),
+                    file_name="reasontrace_step_audit.csv",
+                    mime="text/csv",
+                )
+
+    # ─────────────────────────────────────
+    # Tab 2: Tutor feedback dataset
+    # ─────────────────────────────────────
+    with tab2:
+        st.subheader("Tutor Feedback Dataset")
+        st.write(
+            "This is the foundation for future learning. The app should learn from tutor corrections "
+            "before any supervised learning or RL-style optimization."
+        )
+
+        fdf = tutor_feedback_dataframe()
+
+        if fdf.empty:
+            st.info("No tutor feedback saved yet. Grade one submission and save tutor feedback first.")
+        else:
+            st.dataframe(fdf, use_container_width=True, hide_index=True)
+
+            judgment_counts = fdf["Tutor Judgment"].value_counts().reset_index()
+            judgment_counts.columns = ["Tutor Judgment", "Count"]
+
+            fig = px.bar(
+                judgment_counts,
+                x="Tutor Judgment",
+                y="Count",
+                title="Tutor validation of AI grading decisions",
+            )
+            fig.update_layout(
+                plot_bgcolor="white",
+                paper_bgcolor="white",
+                font_color="#0F172A",
+            )
+            st.plotly_chart(fig, use_container_width=True)
+
+            st.download_button(
+                "Download tutor feedback dataset",
+                data=dataframe_to_csv_bytes(fdf),
+                file_name="stemgrade_tutor_feedback.csv",
+                mime="text/csv",
+            )
+
+    # ─────────────────────────────────────
+    # Tab 3: Student error fingerprint
+    # ─────────────────────────────────────
+    with tab3:
+        st.subheader("Anonymous Student Error Fingerprint")
+        st.write(
+            "This shows how repeated errors can form a reasoning profile for an anonymous student over time."
+        )
+
+        edf = reasontrace_events_dataframe()
+
+        if edf.empty:
+            st.info("No ReasonTrace memory yet. Grade submissions and save feedback first, or load sample demo data.")
+        else:
+            st.dataframe(edf, use_container_width=True, hide_index=True)
+
+            student_options = sorted(edf["Student ID"].dropna().unique().tolist())
+            selected_student = st.selectbox("Select anonymous student", student_options)
+
+            summary = summarize_student_fingerprint(edf, selected_student)
+
+            c1, c2, c3, c4 = st.columns(4)
+            c1.metric("Dominant Error", summary["dominant_error"].replace("_", " ").title())
+            c2.metric("Subjects Seen", len(summary["subjects_seen"]))
+            c3.metric("Review Rate", f"{summary['review_rate']:.2f}")
+            c4.metric("Risk Level", summary["risk_level"])
+
+            st.info(f"Recommended intervention: {summary['recommendation']}")
+
+            sdf = edf[edf["Student ID"] == selected_student]
+            chart_df = sdf.groupby(["Subject", "Error Type"]).size().reset_index(name="Count")
+
+            if not chart_df.empty:
+                fig = px.bar(
+                    chart_df,
+                    x="Subject",
+                    y="Count",
+                    color="Error Type",
+                    title=f"Reasoning fingerprint for {selected_student}",
+                )
+                fig.update_layout(
+                    plot_bgcolor="white",
+                    paper_bgcolor="white",
+                    font_color="#0F172A",
+                )
+                st.plotly_chart(fig, use_container_width=True)
+
+            st.download_button(
+                "Download ReasonTrace memory",
+                data=dataframe_to_csv_bytes(edf),
+                file_name="stemgrade_reasontrace_memory.csv",
+                mime="text/csv",
+            )
+
+    # ─────────────────────────────────────
+    # Tab 4: Cross-subject transfer
+    # ─────────────────────────────────────
+    with tab4:
+        st.subheader("Cross-Subject Error Transfer")
+        st.write(
+            "This prototype looks for repeated reasoning problems that may transfer across subjects, "
+            "such as algebra manipulation errors affecting physics formulas."
+        )
+
+        edf = reasontrace_events_dataframe()
+
+        if edf.empty:
+            st.info("No ReasonTrace memory yet. Grade submissions across subjects to generate insights, or load sample demo data.")
+        else:
+            insights = detect_cross_subject_transfer(edf)
+
+            for insight in insights:
+                st.markdown(
+                    f'<div class="app-card"><p>{insight}</p></div>',
+                    unsafe_allow_html=True,
+                )
+
+            transfer_df = edf.groupby(["Student ID", "Subject", "Error Type"]).size().reset_index(name="Count")
+
+            if not transfer_df.empty:
+                fig = px.density_heatmap(
+                    transfer_df,
+                    x="Subject",
+                    y="Student ID",
+                    z="Count",
+                    title="Cross-subject reasoning error heatmap",
+                )
+                fig.update_layout(
+                    plot_bgcolor="white",
+                    paper_bgcolor="white",
+                    font_color="#0F172A",
+                )
+                st.plotly_chart(fig, use_container_width=True)
+
+            st.warning(
+                "Current status: prototype evidence only. Strong claims require anonymized longitudinal data, "
+                "tutor validation, and accuracy testing."
+            )
